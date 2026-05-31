@@ -185,8 +185,59 @@ body.modal-open{overflow:hidden;}
 .nut-log-meta{font-size:11px;color:var(--text-4);margin-top:2px;}
 .nut-log-right{display:flex;align-items:center;gap:8px;flex-shrink:0;}
 .nut-log-kcal{font-size:13px;font-weight:600;color:var(--accent,#6BE3A4);}
+
+/* ── HOME NAV: centered & big ── */
+.nav[data-tab="main"]{order:1;}
+.nav[data-tab="health"]{order:2;}
+.nav[data-tab="fitness"]{order:3;}
+.nav[data-tab="home"]{order:4;background:var(--accent,#6BE3A4);color:#050506;border-radius:50%;width:62px;height:62px;min-width:62px;padding:0;margin-top:-16px;border:none;font-size:0;box-shadow:0 4px 24px rgba(107,227,164,.5),0 8px 36px rgba(0,0,0,.35);animation:homePulse 3s ease-in-out infinite;flex-shrink:0;}
+.nav[data-tab="home"] svg{width:27px;height:27px;display:block;}
+.nav[data-tab="home"].active{background:var(--accent,#6BE3A4);color:#050506;border-color:transparent;}
+.nav[data-tab="home"]:active{transform:scale(.88) translateY(2px)!important;}
+.nav[data-tab="finance"]{order:5;}
+.nav[data-tab="drumming"]{order:6;}
+.nav[data-tab="reading"]{order:7;}
+@keyframes homePulse{0%,100%{box-shadow:0 4px 24px rgba(107,227,164,.5),0 8px 36px rgba(0,0,0,.35);}50%{box-shadow:0 6px 36px rgba(107,227,164,.8),0 10px 44px rgba(0,0,0,.4);}}
+/* ── PANEL SLIDE-UP ── */
+@keyframes panelIn{from{opacity:0;transform:translateY(20px);}to{opacity:1;transform:translateY(0);}}
+.panel.fade-in{animation:panelIn .3s cubic-bezier(.25,.46,.45,.94) both;}
+/* ── HOME TILES STAGGER ── */
+@keyframes cardIn{from{opacity:0;transform:translateY(16px) scale(.96);}to{opacity:1;transform:translateY(0) scale(1);}}
+#panel-home.fade-in .home-tile:nth-child(1){animation:cardIn .32s .04s ease both;}
+#panel-home.fade-in .home-tile:nth-child(2){animation:cardIn .32s .1s ease both;}
+#panel-home.fade-in .home-tile:nth-child(3){animation:cardIn .32s .16s ease both;}
+#panel-home.fade-in .home-tile:nth-child(4){animation:cardIn .32s .22s ease both;}
+/* ── BUTTON PRESS SPRING ── */
+.btn{transition:transform .12s cubic-bezier(.34,1.56,.64,1),opacity .1s;}
+.btn:active{transform:scale(.91);}
+.nav:not([data-tab="home"]){transition:transform .15s cubic-bezier(.34,1.56,.64,1),color .18s,background .18s,border-color .18s;}
+.nav:not([data-tab="home"]):active{transform:scale(.84);}
+/* ── NAV ACTIVE BOUNCE ── */
+@keyframes navBounce{0%{transform:scale(1);}40%{transform:scale(1.2);}70%{transform:scale(.96);}100%{transform:scale(1);}}
+/* ── RIPPLE ── */
+.home-tile{position:relative;overflow:hidden;}
+.rpl{position:absolute;border-radius:50%;background:rgba(255,255,255,.13);transform:scale(0);animation:rplA .5s ease-out forwards;pointer-events:none;z-index:0;}
+@keyframes rplA{to{transform:scale(5);opacity:0;}}
+/* ── MODAL ENTRANCE ── */
+@keyframes modalIn{from{opacity:0;transform:translateY(24px) scale(.96);}to{opacity:1;transform:translateY(0) scale(1);}}
+.modal-bg.show .modal{animation:modalIn .28s cubic-bezier(.25,.46,.45,.94) both;}
+/* ── TOPBAR FLASH ── */
+@keyframes btnFlash{0%,100%{transform:scale(1);}50%{transform:scale(1.25);}}
+#tbWaterAdd.flash{animation:btnFlash .22s ease!important;}
 </style>
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js">
+document.querySelectorAll('.home-tile').forEach(el=>{
+  el.addEventListener('pointerdown',e=>{
+    const r=document.createElement('div');r.className='rpl';
+    const rect=el.getBoundingClientRect(),size=Math.max(rect.width,rect.height);
+    r.style.cssText='width:'+size+'px;height:'+size+'px;left:'+(e.clientX-rect.left-size/2)+'px;top:'+(e.clientY-rect.top-size/2)+'px;';
+    el.appendChild(r);setTimeout(()=>r.remove(),520);
+  });
+});
+document.querySelectorAll('.nav:not([data-tab="home"])').forEach(b=>{
+  b.addEventListener('click',()=>{b.style.animation='none';requestAnimationFrame(()=>{b.style.animation='navBounce .3s ease';});});
+});
+</script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
 </head>
 <body>
