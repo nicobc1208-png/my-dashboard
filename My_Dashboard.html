@@ -190,10 +190,10 @@ body.modal-open{overflow:hidden;}
 .nav[data-tab="main"]{order:1;}
 .nav[data-tab="health"]{order:2;}
 .nav[data-tab="fitness"]{order:3;}
-.nav[data-tab="home"]{order:4;background:var(--accent,#6BE3A4);color:#050506;border-radius:50%;width:62px;height:62px;min-width:62px;padding:0;margin-top:-16px;border:none;font-size:0;box-shadow:0 4px 24px rgba(107,227,164,.5),0 8px 36px rgba(0,0,0,.35);animation:homePulse 3s ease-in-out infinite;flex-shrink:0;}
+.nav[data-tab="home"]{order:4;background:var(--accent,#6BE3A4);color:#050506;border-radius:50%;width:58px;height:58px;min-width:58px;padding:0;border:none;font-size:0;transform:translateY(-12px);box-shadow:0 4px 24px rgba(107,227,164,.5),0 8px 36px rgba(0,0,0,.35),0 0 0 8px rgba(6,6,8,.92);animation:homePulse 3s ease-in-out infinite;flex-shrink:0;}
 .nav[data-tab="home"] svg{width:27px;height:27px;display:block;}
-.nav[data-tab="home"].active{background:var(--accent,#6BE3A4);color:#050506;border-color:transparent;}
-.nav[data-tab="home"]:active{transform:scale(.88) translateY(2px)!important;}
+.nav[data-tab="home"].active{background:var(--accent,#6BE3A4);color:#050506;border-color:transparent;transform:translateY(-12px);}
+.nav[data-tab="home"]:active{transform:translateY(-12px) scale(.88)!important;}
 .nav[data-tab="finance"]{order:5;}
 .nav[data-tab="drumming"]{order:6;}
 .nav[data-tab="reading"]{order:7;}
