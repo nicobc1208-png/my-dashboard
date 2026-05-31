@@ -151,6 +151,40 @@ select{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='ht
 .mlist-row{display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border:1px solid var(--line);border-radius:10px;margin-bottom:6px;font-size:13px;}
 body.modal-open{overflow:hidden;}
 .scroll-hide::-webkit-scrollbar{display:none;}
+
+/* ── Nutrition ── */
+.nut-summary{padding:14px 16px;background:var(--bg-2,#1a1a1a);border-radius:14px;margin-bottom:12px;}
+.nut-cal-row{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px;}
+.nut-cal-num{font-size:28px;font-weight:700;color:var(--text-1);}
+.nut-cal-unit{font-size:13px;color:var(--text-4);margin-left:3px;}
+.nut-cal-remain{font-size:12px;color:var(--text-4);}
+.nut-bar-track{height:6px;background:rgba(255,255,255,.08);border-radius:3px;overflow:hidden;}
+.nut-bar-fill{height:100%;border-radius:3px;transition:width .4s;}
+.nut-macros{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:14px;}
+.nut-macro{background:var(--bg-2,#1a1a1a);border-radius:12px;padding:10px 8px;text-align:center;}
+.nut-macro-val{font-size:14px;font-weight:600;color:var(--text-1);margin-bottom:4px;}
+.nut-macro-bar{height:4px;background:rgba(255,255,255,.07);border-radius:2px;overflow:hidden;margin:3px 0 4px;}
+.nut-macro-fill{height:100%;border-radius:2px;transition:width .4s;}
+.nut-macro-fill.np{background:#6BE3A4;}.nut-macro-fill.nc{background:#FFD89E;}.nut-macro-fill.nf{background:#FF9E7A;}.nut-macro-fill.nfib{background:#9E8FFF;}
+.nut-macro-lbl{font-size:10px;color:var(--text-4);text-transform:uppercase;letter-spacing:.4px;}
+.nut-add-row{display:flex;gap:8px;margin-bottom:10px;}.nut-add-row input{flex:1;min-width:0;}
+.nut-results{background:var(--bg-2,#1a1a1a);border-radius:12px;overflow:hidden;margin-bottom:12px;max-height:280px;overflow-y:auto;}
+.nut-ri{padding:11px 14px;border-bottom:1px solid rgba(255,255,255,.05);cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:10px;}
+.nut-ri:last-child{border-bottom:none;}.nut-ri:active{background:rgba(255,255,255,.04);}
+.nut-ri-name{font-size:13px;font-weight:500;color:var(--text-1);line-height:1.3;}
+.nut-ri-meta{font-size:11px;color:var(--text-4);margin-top:2px;}
+.nut-scan-wrap{position:relative;border-radius:14px;overflow:hidden;margin-bottom:12px;background:#000;max-height:220px;}
+.nut-scan-wrap video{width:100%;display:block;max-height:220px;object-fit:cover;}
+.nut-scan-ui{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;pointer-events:none;}
+.nut-scan-line{width:55%;height:2px;background:var(--accent,#6BE3A4);box-shadow:0 0 10px var(--accent,#6BE3A4);animation:nutScan 1.8s ease-in-out infinite;}
+@keyframes nutScan{0%,100%{transform:translateY(-50px);opacity:.4}50%{transform:translateY(50px);opacity:1}}
+.nut-scan-hint{font-size:11px;color:rgba(255,255,255,.7);margin-top:10px;}
+.nut-log-item{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:10px 0;border-bottom:1px solid rgba(255,255,255,.05);}
+.nut-log-item:last-child{border-bottom:none;}
+.nut-log-name{font-size:13px;font-weight:500;color:var(--text-1);}
+.nut-log-meta{font-size:11px;color:var(--text-4);margin-top:2px;}
+.nut-log-right{display:flex;align-items:center;gap:8px;flex-shrink:0;}
+.nut-log-kcal{font-size:13px;font-weight:600;color:var(--accent,#6BE3A4);}
 </style>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
@@ -416,6 +450,68 @@ body.modal-open{overflow:hidden;}
       <div id="photoGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(118px,1fr));gap:10px;margin-top:12px;"></div>
     </div>
   </div>
+
+<div style="margin-top:24px;">
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+  <div class="eyebrow" style="font-size:12px;font-weight:600;letter-spacing:.8px;">🥗 NUTRITION</div>
+  <button class="btn" id="nutGoalBtn" style="font-size:12px;padding:6px 10px;">⚙ Goals</button>
+</div>
+<div class="nut-summary">
+  <div class="nut-cal-row">
+    <div><span class="nut-cal-num" id="nutCalNum">0</span><span class="nut-cal-unit">kcal</span></div>
+    <div class="nut-cal-remain" id="nutCalRemain">of 2000 remaining</div>
+  </div>
+  <div class="nut-bar-track"><div class="nut-bar-fill" id="nutCalFill" style="width:0%;background:var(--accent,#6BE3A4);"></div></div>
+</div>
+<div class="nut-macros">
+  <div class="nut-macro"><div class="nut-macro-val" id="nutPVal">0g</div><div class="nut-macro-bar"><div class="nut-macro-fill np" id="nutPFill" style="width:0%"></div></div><div class="nut-macro-lbl">Protein</div></div>
+  <div class="nut-macro"><div class="nut-macro-val" id="nutCVal">0g</div><div class="nut-macro-bar"><div class="nut-macro-fill nc" id="nutCFill" style="width:0%"></div></div><div class="nut-macro-lbl">Carbs</div></div>
+  <div class="nut-macro"><div class="nut-macro-val" id="nutFVal">0g</div><div class="nut-macro-bar"><div class="nut-macro-fill nf" id="nutFFill" style="width:0%"></div></div><div class="nut-macro-lbl">Fat</div></div>
+  <div class="nut-macro"><div class="nut-macro-val" id="nutFibVal">0g</div><div class="nut-macro-bar"><div class="nut-macro-fill nfib" id="nutFibFill" style="width:0%"></div></div><div class="nut-macro-lbl">Fiber</div></div>
+</div>
+<div class="nut-add-row">
+  <input type="text" id="nutSearchInp" placeholder="Search food or enter barcode…" autocomplete="off">
+  <button class="btn" id="nutScanBtn" title="Scan barcode" style="padding:8px 11px;">📷</button>
+  <button class="btn btn-accent" id="nutAddBtn">Search</button>
+</div>
+<div id="nutScanWrap" class="nut-scan-wrap hidden">
+  <video id="nutVideo" autoplay playsinline muted></video>
+  <div class="nut-scan-ui"><div class="nut-scan-line"></div><div class="nut-scan-hint">Point camera at barcode</div></div>
+  <button class="btn" id="nutScanClose" style="position:absolute;top:8px;right:8px;padding:4px 10px;font-size:12px;z-index:1;">✕ Close</button>
+</div>
+<div id="nutResultsWrap" class="hidden"><div id="nutResultsList" class="nut-results"></div></div>
+<div id="nutLogWrap">
+  <div class="eyebrow" style="font-size:10px;letter-spacing:.6px;margin-bottom:8px;opacity:.5;">TODAY'S LOG</div>
+  <div id="nutLogList"></div>
+</div>
+</div>
+<div id="nutServModal" class="modal-bg hidden">
+<div class="modal">
+  <div class="modal-title" id="nutServTitle" style="font-size:15px;line-height:1.4;margin-bottom:4px;"></div>
+  <div class="sub muted" id="nutServMeta" style="font-size:12px;margin-bottom:14px;"></div>
+  <div class="field"><label class="field-l">Servings</label>
+    <div style="display:flex;align-items:center;gap:10px;">
+      <button class="btn" id="nutServDec" style="padding:6px 12px;">−</button>
+      <input type="number" id="nutServQty" value="1" min="0.1" step="0.5" style="text-align:center;width:70px;">
+      <button class="btn" id="nutServInc" style="padding:6px 12px;">+</button>
+    </div>
+  </div>
+  <div class="sub muted" id="nutServCalc" style="font-size:12px;padding:10px;background:rgba(255,255,255,.04);border-radius:8px;margin-bottom:14px;"></div>
+  <div class="row"><button class="btn" id="nutServCancel">Cancel</button><button class="btn btn-primary" id="nutServLog">Log it</button></div>
+</div>
+</div>
+<div id="nutGoalModal" class="modal-bg hidden">
+<div class="modal">
+  <div class="modal-title">Daily Nutrition Goals</div>
+  <div class="field"><label class="field-l">Calories (kcal)</label><input type="number" id="ngCal" min="500" max="9999"></div>
+  <div class="field"><label class="field-l">Protein (g)</label><input type="number" id="ngP" min="0"></div>
+  <div class="field"><label class="field-l">Carbs (g)</label><input type="number" id="ngC" min="0"></div>
+  <div class="field"><label class="field-l">Fat (g)</label><input type="number" id="ngF" min="0"></div>
+  <div class="field"><label class="field-l">Fiber (g)</label><input type="number" id="ngFib" min="0"></div>
+  <div class="row" style="margin-top:6px;"><button class="btn" id="ngCancel">Cancel</button><button class="btn btn-primary" id="ngSave">Save</button></div>
+</div>
+</div>
+
 </section>
 
 <!-- ══════════════ FITNESS ══════════════ -->
@@ -901,7 +997,7 @@ function _reRenderActive(){
   topbar();
   if(_activeTab==='home')renderHome();
   else if(_activeTab==='main'){renderMain();renderTmr();}
-  else if(_activeTab==='health'){renderStack();renderWater();renderWt();renderPhotos();}
+  else if(_activeTab==='health'){renderStack();renderWater();renderWt();renderPhotos();renderNut();}
   else if(_activeTab==='fitness')renderFitness();
   else if(_activeTab==='finance'){renderNW();renderSubs();populateOrderAccts();renderOrders();renderWish();}
   else if(_activeTab==='drumming')renderDrums();
@@ -1114,7 +1210,7 @@ function go(tab,sub){_activeTab=tab;
   if(tab==='drumming')renderDrums();
   if(tab==='reading')renderReading();
   if(tab==='finance'){renderNW();renderSubs();populateOrderAccts();renderOrders();renderWish();}
-  if(tab==='health'){renderStack();renderWater();renderWt();renderPhotos();}
+  if(tab==='health'){renderStack();renderWater();renderWt();renderPhotos();renderNut();}
   if(tab==='fitness'){
     if(!hevyOn()&&hevyCfg.apiKey&&!hevyCfg._syncing){
       hevyCfg._syncing=true;
@@ -1404,14 +1500,14 @@ function hevyDisconnect(){hevyCfg={url:hevyCfg.url,token:hevyCfg.token,on:false}
 /* exercise list: Hevy when on, else local */
 const fFiltered=()=>{
   if(hevyOn())return (hevyData.exercises||[]).map(e=>({id:e.id,name:e.name,bw:(e.sessions.slice(-1)[0]||{}).bw,
-    repMin:5,repMax:8,step:2.5,startWeight:(e.sessions.slice(-1)[0]||{}).weightKg||0,hevy:true}));
+    repMin:5,repMax:8,step:2.5,startWeight:Math.round(((e.sessions.slice(-1)[0]||{}).weightKg||0)*100)/100,hevy:true}));
   return F.exercises.filter(e=>(e.gym===F.filterGym||e.gym==='both')&&e.day===F.filterDay);
 };
 function fCur(){const f=fFiltered();if(!f.length)return null;let ex=f.find(e=>e.id===F.currentEx);if(!ex){ex=f[0];F.currentEx=ex.id;if(!hevyOn())fSave();}return ex;}
 /* history: Hevy sessions (mapped to {weight,reps,date,bw}) when on, else local logs */
 const fLogs=()=>{
   if(hevyOn()){const e=hevyExMap()[F.currentEx];if(!e)return [];
-    const conv=F.units==='lb'?kg=>Math.round(kg*2.20462*4)/4:kg=>kg;
+    const conv=F.units==='lb'?kg=>Math.round(kg*2.20462*4)/4:kg=>Math.round(kg*100)/100;
     return e.sessions.map(s=>({date:s.date,reps:s.reps,weight:s.bw?0:conv(s.weightKg),bw:s.bw}));}
   return (F.logs[F.currentEx]||[]).slice();
 };
@@ -1816,6 +1912,113 @@ if(_savedFbCfg&&_savedFbPass){
 
 // if Hevy was connected, refresh quietly in the background on open
 if(hevyCfg.on||(hevyCfg.apiKey&&!hevyCfg.on&&!hevyData)){hevySync().then(()=>{if($('panel-fitness').classList.contains('active'))renderFitness();if(typeof renderHevyStatus==='function')renderHevyStatus();}).catch(()=>{});}
+})();
+
+/* ═══ NUTRITION TRACKER ═══ */
+const NUT_KEY='po_nutrition_v1';
+const NUT_DEF={calGoal:2000,pGoal:150,cGoal:200,fGoal:65,fibGoal:30,logs:{}};
+let _nutPending=null,_nutStream=null,_nutDetector=null,_nutScanInt=null;
+function nutD(){return lsGet(NUT_KEY,null)||Object.assign({},NUT_DEF,{logs:{}});}
+function nutSv(d){lsSet(NUT_KEY,d);renderNut();}
+function nutTot(logs){return(logs||[]).reduce((t,l)=>{t.cal+=l.cal||0;t.p+=l.protein||0;t.c+=l.carbs||0;t.f+=l.fat||0;t.fib+=l.fiber||0;return t;},{cal:0,p:0,c:0,f:0,fib:0});}
+function renderNut(){
+  const d=nutD(),k=calKey(),logs=d.logs[k]||[];
+  const t=nutTot(logs);
+  if(!$('nutCalNum'))return;
+  const rCal=Math.max(0,(d.calGoal||2000)-Math.round(t.cal));
+  const pct=Math.min(100,t.cal/(d.calGoal||2000)*100);
+  $('nutCalNum').textContent=Math.round(t.cal);
+  $('nutCalRemain').textContent='of '+(d.calGoal||2000)+' · '+(rCal>0?rCal+' left':'over '+(Math.round(t.cal)-(d.calGoal||2000)));
+  $('nutCalFill').style.width=pct+'%';
+  $('nutCalFill').style.background=pct>100?'var(--danger,#ff4f4f)':pct>85?'var(--warning,#FFD89E)':'var(--accent,#6BE3A4)';
+  const sm=(id,val,goal)=>{$(id).textContent=Math.round(val*10)/10+'g';$(id.replace('Val','Fill')).style.width=Math.min(100,goal?val/goal*100:0)+'%';};
+  sm('nutPVal',t.p,d.pGoal||150);sm('nutCVal',t.c,d.cGoal||200);sm('nutFVal',t.f,d.fGoal||65);sm('nutFibVal',t.fib,d.fibGoal||30);
+  const ll=$('nutLogList');ll.innerHTML='';
+  if(!logs.length){ll.innerHTML='<div style="padding:12px 0;font-size:13px;color:var(--text-4);">Nothing logged yet — search or scan to add food.</div>';return;}
+  [...logs].reverse().forEach((item,ri)=>{
+    const idx=logs.length-1-ri;
+    const div=document.createElement('div');div.className='nut-log-item';
+    const macro=[(item.protein?Math.round(item.protein)+'g P':''),(item.carbs?Math.round(item.carbs)+'g C':''),(item.fat?Math.round(item.fat)+'g F':'')].filter(Boolean).join(' · ');
+    div.innerHTML='<div><div class="nut-log-name">'+esc(item.name)+'</div><div class="nut-log-meta">'+(item.servingLabel||item.servingSize||'')+(macro?' · '+macro:'')+'</div></div><div class="nut-log-right"><span class="nut-log-kcal">'+Math.round(item.cal)+'</span><button class="x" data-i="'+idx+'">×</button></div>';
+    div.querySelector('.x').onclick=e=>{const d2=nutD();d2.logs[k]=d2.logs[k]||[];d2.logs[k].splice(+e.target.dataset.i,1);nutSv(d2);};
+    ll.appendChild(div);
+  });
+}
+async function nutSearch(q){
+  const rw=$('nutResultsWrap'),rl=$('nutResultsList');if(!rw||!rl)return;
+  rw.classList.remove('hidden');rl.innerHTML='<div style="padding:12px 14px;font-size:13px;color:var(--text-4);">Searching…</div>';
+  try{
+    const r=await fetch('https://world.openfoodfacts.org/cgi/search.pl?search_terms='+encodeURIComponent(q)+'&json=1&page_size=12&fields=product_name,brands,nutriments,serving_size,serving_quantity&nocache=1');
+    const data=await r.json();const prods=(data.products||[]).filter(p=>p.product_name&&p.product_name.trim());
+    if(!prods.length){rl.innerHTML='<div style="padding:12px 14px;font-size:13px;color:var(--text-4);">No results.</div>';return;}
+    rl.innerHTML='';
+    prods.forEach(p=>{
+      const nm=p.nutriments||{};const cal=Math.round(nm['energy-kcal_100g']||nm['energy-kcal']||0);
+      const serv=p.serving_size||'100g';const sq=parseFloat(p.serving_quantity)||100;
+      const div=document.createElement('div');div.className='nut-ri';
+      const brand=p.brands&&p.product_name?' · <span style="color:var(--text-4)">'+esc(p.brands.split(',')[0].trim())+'</span>':'';
+      div.innerHTML='<div><div class="nut-ri-name">'+esc(p.product_name)+brand+'</div><div class="nut-ri-meta">'+esc(serv)+' · '+cal+' kcal</div></div><span style="color:var(--accent,#6BE3A4);font-size:20px;">+</span>';
+      div.onclick=()=>nutOpenServ({name:p.product_name+(p.brands?' ('+p.brands.split(',')[0].trim()+')':''),cal:cal,protein:Math.round((nm.proteins_100g||0)*10)/10,carbs:Math.round((nm.carbohydrates_100g||0)*10)/10,fat:Math.round((nm.fat_100g||0)*10)/10,fiber:Math.round((nm.fiber_100g||0)*10)/10,satFat:Math.round((nm['saturated-fat_100g']||0)*10)/10,sugar:Math.round((nm.sugars_100g||0)*10)/10,sodium:Math.round((nm.sodium_100g||0)*1000)/10,servingSize:serv,servingQty:sq,per:100});
+      rl.appendChild(div);
+    });
+  }catch(e){rl.innerHTML='<div style="padding:12px 14px;font-size:13px;color:var(--text-4);">Search failed.</div>';}
+}
+async function nutBarcode(code){
+  try{
+    const r=await fetch('https://world.openfoodfacts.org/api/v0/product/'+code+'.json');
+    const data=await r.json();if(data.status!==1||!data.product){if($('nutSearchInp'))$('nutSearchInp').placeholder='Not found: '+code;return;}
+    const p=data.product,nm=p.nutriments||{};const sq=parseFloat(p.serving_quantity)||100;
+    nutOpenServ({name:(p.product_name||'Unknown')+(p.brands?' ('+p.brands.split(',')[0].trim()+')':''),cal:Math.round(nm['energy-kcal_100g']||0),protein:Math.round((nm.proteins_100g||0)*10)/10,carbs:Math.round((nm.carbohydrates_100g||0)*10)/10,fat:Math.round((nm.fat_100g||0)*10)/10,fiber:Math.round((nm.fiber_100g||0)*10)/10,satFat:Math.round((nm['saturated-fat_100g']||0)*10)/10,sugar:Math.round((nm.sugars_100g||0)*10)/10,sodium:Math.round((nm.sodium_100g||0)*1000)/10,servingSize:p.serving_size||'100g',servingQty:sq,per:100});
+  }catch(e){if($('nutSearchInp'))$('nutSearchInp').placeholder='Lookup failed';}
+}
+function nutOpenServ(food){
+  $('nutResultsWrap').classList.add('hidden');nutStopScan();_nutPending=food;
+  const t=$('nutServTitle');if(t)t.textContent=food.name.length>45?food.name.slice(0,42)+'…':food.name;
+  const m=$('nutServMeta');if(m)m.textContent='Per '+food.servingSize;
+  if($('nutServQty'))$('nutServQty').value=1;nutCalcServ();
+  if($('nutServModal')){$('nutServModal').classList.add('show');document.body.classList.add('modal-open');}
+}
+function nutCalcServ(){
+  if(!_nutPending||!$('nutServCalc'))return;
+  const s=parseFloat($('nutServQty').value)||1,f=_nutPending,mult=s*(f.servingQty||100)/(f.per||100);
+  $('nutServCalc').textContent=s+' × '+f.servingSize+' → '+Math.round(f.cal*mult)+' kcal · '+Math.round(f.protein*mult*10)/10+'g P · '+Math.round(f.carbs*mult*10)/10+'g C · '+Math.round(f.fat*mult*10)/10+'g F';
+}
+async function nutStartScan(){
+  if(!('BarcodeDetector' in window)){const code=prompt('Enter barcode manually:');if(code&&code.trim())nutBarcode(code.trim());return;}
+  try{
+    _nutStream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}}});
+    const v=$('nutVideo');if(v)v.srcObject=_nutStream;
+    $('nutScanWrap').classList.remove('hidden');
+    _nutDetector=new BarcodeDetector({formats:['ean_13','ean_8','upc_a','upc_e','code_128']});
+    _nutScanInt=setInterval(async()=>{const v=$('nutVideo');if(!v||!v.videoWidth)return;try{const c=await _nutDetector.detect(v);if(c.length){nutStopScan();nutBarcode(c[0].rawValue);}}catch(e){}},400);
+  }catch(e){alert('Camera unavailable.');}
+}
+function nutStopScan(){
+  if(_nutScanInt){clearInterval(_nutScanInt);_nutScanInt=null;}
+  if(_nutStream){_nutStream.getTracks().forEach(t=>t.stop());_nutStream=null;}
+  const sw=$('nutScanWrap');if(sw)sw.classList.add('hidden');
+  const v=$('nutVideo');if(v)v.srcObject=null;
+}
+(function nutWire(){
+  const sa=$('nutAddBtn'),si=$('nutSearchInp'),sc=$('nutScanBtn'),sx=$('nutScanClose');
+  const ngb=$('nutGoalBtn'),ngm=$('nutGoalModal'),ngx=$('ngCancel'),ngs=$('ngSave');
+  const nsm=$('nutServModal'),nsc=$('nutServCancel'),nsl=$('nutServLog'),nsq=$('nutServQty'),nsd=$('nutServDec'),nsi=$('nutServInc');
+  if(sa)sa.onclick=()=>{const q=si.value.trim();if(q)nutSearch(q);};
+  if(si)si.onkeydown=e=>{if(e.key==='Enter'){const q=si.value.trim();if(q)nutSearch(q);}};
+  if(sc)sc.onclick=nutStartScan;if(sx)sx.onclick=nutStopScan;
+  if(ngb)ngb.onclick=()=>{const d=nutD();$('ngCal').value=d.calGoal||2000;$('ngP').value=d.pGoal||150;$('ngC').value=d.cGoal||200;$('ngF').value=d.fGoal||65;$('ngFib').value=d.fibGoal||30;ngm.classList.add('show');document.body.classList.add('modal-open');};
+  if(ngx)ngx.onclick=()=>{ngm.classList.remove('show');document.body.classList.remove('modal-open');};
+  if(ngs)ngs.onclick=()=>{const d=nutD();d.calGoal=+$('ngCal').value||2000;d.pGoal=+$('ngP').value||150;d.cGoal=+$('ngC').value||200;d.fGoal=+$('ngF').value||65;d.fibGoal=+$('ngFib').value||30;nutSv(d);ngm.classList.remove('show');document.body.classList.remove('modal-open');};
+  if(nsd)nsd.onclick=()=>{const v=parseFloat(nsq.value)||1;if(v>0.5)nsq.value=Math.round((v-0.5)*10)/10;nutCalcServ();};
+  if(nsi)nsi.onclick=()=>{nsq.value=Math.round(((parseFloat(nsq.value)||1)+0.5)*10)/10;nutCalcServ();};
+  if(nsq)nsq.oninput=nutCalcServ;
+  if(nsc)nsc.onclick=()=>{nsm.classList.remove('show');document.body.classList.remove('modal-open');_nutPending=null;};
+  if(nsl)nsl.onclick=()=>{
+    if(!_nutPending)return;const s=parseFloat(nsq.value)||1,f=_nutPending,mult=s*(f.servingQty||100)/(f.per||100);
+    const d=nutD(),k=calKey();d.logs[k]=d.logs[k]||[];
+    d.logs[k].push({name:f.name,cal:Math.round(f.cal*mult),protein:Math.round(f.protein*mult*10)/10,carbs:Math.round(f.carbs*mult*10)/10,fat:Math.round(f.fat*mult*10)/10,fiber:Math.round(f.fiber*mult*10)/10,satFat:Math.round((f.satFat||0)*mult*10)/10,sugar:Math.round((f.sugar||0)*mult*10)/10,sodium:Math.round((f.sodium||0)*mult*10)/10,servingSize:f.servingSize,servingLabel:s+' × '+(f.servingSize||'serving'),servings:s});
+    nutSv(d);nsm.classList.remove('show');document.body.classList.remove('modal-open');if(si)si.value='';_nutPending=null;
+  };
 })();
 </script>
 
