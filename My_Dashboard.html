@@ -1500,7 +1500,7 @@ function hevyDisconnect(){hevyCfg={url:hevyCfg.url,token:hevyCfg.token,on:false}
 /* exercise list: Hevy when on, else local */
 const fFiltered=()=>{
   if(hevyOn())return (hevyData.exercises||[]).map(e=>({id:e.id,name:e.name,bw:(e.sessions.slice(-1)[0]||{}).bw,
-    repMin:5,repMax:8,step:2.5,startWeight:Math.round(((e.sessions.slice(-1)[0]||{}).weightKg||0)*100)/100,hevy:true}));
+    repMin:5,repMax:8,step:2.5,startWeight:(()=>{const wk=Math.round(((e.sessions.slice(-1)[0]||{}).weightKg||0)*100)/100;return F.units==='lb'?Math.round(wk*2.20462*4)/4:wk;})(),hevy:true}));
   return F.exercises.filter(e=>(e.gym===F.filterGym||e.gym==='both')&&e.day===F.filterDay);
 };
 function fCur(){const f=fFiltered();if(!f.length)return null;let ex=f.find(e=>e.id===F.currentEx);if(!ex){ex=f[0];F.currentEx=ex.id;if(!hevyOn())fSave();}return ex;}
