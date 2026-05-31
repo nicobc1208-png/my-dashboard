@@ -873,6 +873,11 @@ body.modal-open{overflow:hidden;}
 </div></div>
 
 
+<script>
+/* Supabase sync — auto-configured */
+window._SB_URL='https://ckzzylwltjvcmkcbqtnz.supabase.co';
+window._SB_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNrenp5bHdsdGp2Y21rY2JxdG56Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk5MjM1ODEsImV4cCI6MjA5NTQ5OTU4MX0.2mpGriKXW5ppxDNgnTrgg55JKiGRU3rrrq0gj1lMWRM';
+</script>
 <script>(function(){
 'use strict';
 const $=id=>document.getElementById(id);
@@ -885,6 +890,7 @@ const _fbEnc=k=>k.replace(/:/g,'__c__').replace(/\./g,'__d__').replace(/#/g,'__h
 const _fbDec=k=>k.replace(/__c__/g,':').replace(/__d__/g,'.').replace(/__h__/g,'#');
 const lsSet=(k,v)=>{
   try{localStorage.setItem(k,JSON.stringify(v));}catch(e){return false;}
+  if(window._SB_URL)_sbPush();
   if(_fbReady&&!_NOSYNC.some(s=>k===s||k.startsWith(s))){
     clearTimeout(_fbQ[k]);
     _fbQ[k]=setTimeout(()=>{
@@ -1031,6 +1037,26 @@ function renderHome(){
     else $('hSuppTxt').innerHTML=`<span style="color:var(--success)">✓</span> All ${sItems.length} supplements taken today`;}
   else $('hSuppSect').style.display='none';}
 
+
+/* ── Supabase sync ── */
+const _SB_NOSYNC=['po_coach_photos','hevy_data_v1','hevy_cfg_v1','fb_config','fb_pass'];
+let _sbPushTimer=null;
+function _sbHeaders(){return{'apikey':window._SB_KEY,'Authorization':'Bearer '+window._SB_KEY,'Content-Type':'application/json'};}
+async function _sbPull(){
+  try{const r=await fetch(window._SB_URL+'/rest/v1/dashboard_sync?id=eq.main&select=data',{headers:_sbHeaders()});
+    if(!r.ok)return;const rows=await r.json();if(!rows.length||!rows[0].data)return;
+    Object.entries(rows[0].data).forEach(([k,v])=>{if(!_SB_NOSYNC.some(s=>k===s||k.startsWith(s)))localStorage.setItem(k,JSON.stringify(v));});}
+  catch(e){}}
+function _sbPush(){
+  clearTimeout(_sbPushTimer);
+  _sbPushTimer=setTimeout(async()=>{
+    try{const data={};
+      for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);
+        if(!_SB_NOSYNC.some(s=>k===s||k.startsWith(s))){try{data[k]=JSON.parse(localStorage.getItem(k));}catch(e){data[k]=localStorage.getItem(k);}}}
+      await fetch(window._SB_URL+'/rest/v1/dashboard_sync',{method:'POST',
+        headers:{..._sbHeaders(),'Prefer':'resolution=merge-duplicates'},
+        body:JSON.stringify({id:'main',data,updated_at:new Date().toISOString()})});}
+    catch(e){}},1500);}
 /* ── interactive chart helper ── */
 function makeChartInteractive(svgEl,vals,labels,fmtVal){
   if(!svgEl||vals.length<2)return;
@@ -1770,11 +1796,17 @@ if(window._FB_AUTO_CFG&&!localStorage.getItem('fb_config')){
   localStorage.setItem('fb_config',JSON.stringify(window._FB_AUTO_CFG));
   localStorage.setItem('fb_pass',window._FB_AUTO_PASS||'mydashboard');}
 
-buildNav();topbar();renderMain();renderTmr();
+// Pull latest data from Supabase before first render
+(async()=>{
+  if(window._SB_URL){try{await _sbPull();}catch(e){}}
+  buildNav();topbar();renderMain();renderTmr();
+  const _start=(location.hash||'#home').slice(1);
+  go(NAV.find(n=>n.id===_start)?_start:'home');
+})();
+// skip the duplicate go() call below
 setInterval(renderRing,60000);setInterval(()=>{topbar();if($('panel-home').classList.contains('active'))renderHome();},60000);setInterval(topbar,30000);
 window.addEventListener('focus',topbar);
-const start=(location.hash||'#home').slice(1);
-go(NAV.find(n=>n.id===start)?start:'home');
+// (routing handled in async boot above)
 
 // Auto-connect Firebase if previously set up
 const _savedFbCfg=localStorage.getItem('fb_config'),_savedFbPass=localStorage.getItem('fb_pass');
