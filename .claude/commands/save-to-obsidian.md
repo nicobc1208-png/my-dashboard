@@ -8,7 +8,9 @@ Ask me for:
 3. **Type** — Note / Idea / Goal / Book Note / Reference / Daily Log
 4. **Tags** — comma-separated
 
-Then create a `.md` file in the vault with proper Obsidian structure:
+Then check if the Obsidian vault is accessible via Google Drive MCP (`mcp__Google_Drive__search_files` — search for the vault folder name). If found, create the file there directly. If not found, output the fully-formatted markdown so the user can paste it manually.
+
+Format:
 
 ```markdown
 ---
@@ -26,4 +28,4 @@ Content here...
 - [[Related Note]]
 ```
 
-Use `[[wikilinks]]` for cross-references where relevant. Ask me for the vault path if you don't know it yet. Confirm the file was written with its full path.
+Use `[[wikilinks]]` for cross-references where relevant. Confirm whether the file was written to Drive or output for manual paste.
