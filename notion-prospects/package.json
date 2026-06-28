@@ -1,0 +1,12 @@
+{
+  "name": "notion-prospects-setup",
+  "version": "1.0.0",
+  "description": "Creates Nick Digital prospect pages in Notion for each target niche",
+  "main": "create-pages.js",
+  "scripts": {
+    "start": "node create-pages.js"
+  },
+  "dependencies": {
+    "@notionhq/client": "^2.2.15"
+  }
+}
