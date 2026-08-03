@@ -407,6 +407,8 @@ circle.prg{fill:none;stroke-linecap:round;transition:stroke-dashoffset .9s var(-
       </div>
     </div>
     <div class="sb-streak" id="sbStreak" onclick="go('stats')">🔥 <span id="sbStreakN">0</span></div>
+    <div id="syncPill" class="hidden" onclick="syncSheet()" title="Sync"
+         style="flex:0 0 auto;font-size:15px;cursor:pointer;padding:4px 2px;line-height:1"></div>
   </div>
 
   <!-- ══ PANELS ══ -->
@@ -574,6 +576,7 @@ function save(rerender = true) {
     try { localStorage.setItem(KEY, JSON.stringify(DB)); }
     catch (e) { toast('Storage full — export & prune photos'); }
   }, 120);
+  syncQueue();                 // encrypted push, debounced
   if (rerender) render();
 }
 
@@ -871,6 +874,7 @@ function render() {
   $('panels').innerHTML = `<div class="panel active" id="panel-${tab}">${RENDERERS[tab]()}</div>`;
   renderNav();
   renderStatusbar();
+  paintSyncPill();
   if (WIRE[tab]) WIRE[tab]();      // post-render event wiring
 }
 const WIRE = {};
@@ -1188,11 +1192,15 @@ RENDERERS.home = function () {
 
   <div class="sect">${sectionHead('System')}
     <div class="row wrap" style="gap:8px">
-      <button class="btn btn-sm" onclick="exportData()">Export backup</button>
-      <button class="btn btn-sm" onclick="importData()">Import</button>
+      <button class="btn btn-sm" onclick="syncSheet()">${syncOn() ? '☁️ Sync settings' : '☁️ Set up sync'}</button>
+      <button class="btn btn-sm" onclick="hevySheet()">Hevy</button>
       <button class="btn btn-sm" onclick="settingsSheet()">Settings</button>
+      <button class="btn btn-sm" onclick="exportData()">Export</button>
+      <button class="btn btn-sm" onclick="importData()">Import</button>
     </div>
-    <div class="li-s tc" style="margin-top:14px">Nick OS · all data lives on this device</div>
+    <div class="li-s tc" style="margin-top:14px;white-space:normal">Nick OS · ${syncOn()
+      ? 'end-to-end encrypted sync is on — open this URL on any device and sign in with your sync ID'
+      : 'data lives on this device only. Set up sync to reach it from anywhere.'}</div>
   </div>`;
 };
 
@@ -1406,6 +1414,7 @@ function fitTrain() {
       i === next.idx && !todayDone ? '▸' + c : c).join(' · ')}</div>
     <div class="focus-a">
       <button class="btn btn-primary" onclick="logWorkout()">${todayDone ? '+ Another session' : 'Log ' + esc(next.name)}</button>
+      <button class="btn btn-ghost" onclick="hevyPull()">⟳ Hevy</button>
     </div>
   </div>
 
@@ -1425,7 +1434,7 @@ function fitTrain() {
 
   <div class="sect">${sectionHead('Sessions per week · last 8')}
     <div class="card">${barChart(last8Weeks(), { color: 'var(--fit)', target, h: 110 })}
-      <div class="li-s tc mt-sm" style="white-space:normal">Dashed line = your ${target}/week target</div></div>
+      <div class="li-s tc mt-sm">Dashed line = your ${target}/week target</div></div>
   </div>
 
   <div class="sect">${sectionHead('Personal records', ['+ PR', 'addPR()'])}
@@ -1542,7 +1551,7 @@ function fitBody() {
     <div class="li-s">${cur ? 'Last weigh-in ' + fmtDW(cur.date) : 'No weigh-ins yet'}</div>
     ${B.goalWeight ? `
       <div class="bar mt" style="--_c:var(--fit)"><span style="width:${pct(cur ? cur.w : 0, B.goalWeight)}%"></span></div>
-      <div class="li-s" style="margin-top:6px;white-space:normal">Goal ${B.goalWeight} ${DB.profile.unit}${toGoal > 0 ? ` · ${round(toGoal, 1)} to go` : ' · reached 🎉'}${weeksOut ? ` · ~${weeksOut} weeks at this rate` : ''}</div>` : ''}
+      <div class="li-s" style="margin-top:6px">Goal ${B.goalWeight} ${DB.profile.unit}${toGoal > 0 ? ` · ${round(toGoal, 1)} to go` : ' · reached 🎉'}${weeksOut ? ` · ~${weeksOut} weeks at this rate` : ''}</div>` : ''}
     <button class="btn btn-accent btn-block mt" style="--_c:var(--fit)" onclick="addWeight()">+ Log weigh-in</button>
   </div>
 
@@ -1550,7 +1559,7 @@ function fitBody() {
     <div class="eyebrow">Bulk pace</div>
     <div class="focus-t" style="font-size:17px;margin:6px 0 5px;color:${verdict.color}">${esc(verdict.title)}</div>
     <div class="sub">${esc(verdict.msg)}</div>
-    <div class="li-s" style="margin-top:9px;white-space:normal">Target band ${B.rateMin}–${B.rateMax} ${DB.profile.unit}/week — fast enough to build, slow enough to stay lean</div>
+    <div class="li-s" style="margin-top:9px">Target band ${B.rateMin}–${B.rateMax} ${DB.profile.unit}/week — fast enough to build, slow enough to stay lean</div>
   </div>
 
   <div class="sect">${sectionHead('Trend · 90 days')}
@@ -1670,7 +1679,7 @@ function fitFuel() {
         <button class="btn btn-sm" onclick="drink('milk',-1)">−</button></div>
     </div>
   </div>
-  <div class="li-s tc mb" style="margin-top:-4px;white-space:normal">Milk macros are counted above automatically
+  <div class="li-s tc mb" style="margin-top:-4px">Milk macros are counted above automatically
     (${MILK[DB.profile.milk || 'whole'].label} · ${MILK[DB.profile.milk || 'whole'].kcal} kcal/cup)</div>
 
   ${byMeal}
@@ -1685,7 +1694,7 @@ function fitFuel() {
     <div class="card">${barChart(wk.map(k => ({
       label: DOW[new Date(k + 'T12:00:00').getDay()][0], val: nutTotals(k).kcal
     })), { color: 'var(--biz)', target: T.kcal, h: 108 })}
-      <div class="li-s tc" style="white-space:normal">Bulking is won on the days you don't feel like eating</div></div>
+      <div class="li-s tc">Bulking is won on the days you don't feel like eating</div></div>
   </div>`;
 }
 
@@ -2266,7 +2275,7 @@ function bizRev() {
 
   <div class="card mb" style="--_c:var(--biz)">
     <div class="eyebrow">Road to $10k/month</div>
-    <div class="li-s" style="margin:7px 0 10px;white-space:normal">Your floor is $10k. Next rung: ${kmoney(nextRung)} — that's ${kmoney(Math.max(0, nextRung - monthRev))} more this month.</div>
+    <div class="li-s" style="margin:7px 0 10px">Your floor is $10k. Next rung: ${kmoney(nextRung)} — that's ${kmoney(Math.max(0, nextRung - monthRev))} more this month.</div>
     ${rungs.map(r => `<div class="row" style="gap:9px;margin-bottom:6px">
       <div class="fs11 muted num" style="width:42px;flex:0 0 auto">${kmoney(r)}</div>
       <div class="bar thin grow" style="--_c:${monthRev >= r ? 'var(--fit)' : 'var(--biz)'}"><span style="width:${pct(monthRev, r)}%"></span></div>
@@ -2536,7 +2545,7 @@ function mnSave() {
   <div class="card accent mb" style="--_c:var(--money)">
     <div class="eyebrow">Total saved</div>
     <div class="big" style="margin-top:6px">${money(sum(DB.assets.filter(a => ['cash','savings','invest'].includes(a.type)).map(a => a.val)))}</div>
-    <div class="li-s" style="white-space:normal">Across your cash, savings and investments</div>
+    <div class="li-s">Across your cash, savings and investments</div>
     <div class="sub mt" style="line-height:1.6">You said you're saving without a target. That works — but a number
       with a date behind it saves faster than one without. Add one below whenever you're ready.</div>
   </div>
@@ -2743,7 +2752,7 @@ function lfSchool() {
   ${daysToStart > 0 ? `<div class="card accent mb" style="--_c:var(--school)">
     <div class="eyebrow">Senior year</div>
     <div class="focus-t" style="font-size:19px;margin-top:6px">${daysToStart} day${daysToStart === 1 ? '' : 's'} until school starts</div>
-    <div class="li-s" style="white-space:normal">${fmtDW(start)} · courses and assignments will fill in once you have a schedule</div>
+    <div class="li-s">${fmtDW(start)} · courses and assignments will fill in once you have a schedule</div>
   </div>` : ''}
 
   ${!DB.college.length ? `<div class="card mb" style="--_c:var(--school)">
@@ -2943,7 +2952,7 @@ function lfMusic() {
       label: DOW[new Date(k + 'T12:00:00').getDay()][0],
       val: sum(mine.filter(s => s.date === k).map(s => s.mins))
     })), { color: 'var(--music)', target: Math.round(target / 7), h: 104 })}
-      <div class="li-s tc" style="white-space:normal">Dashed line = ${Math.round(target / 7)} min/day to hit ${target}/week</div></div>
+      <div class="li-s tc">Dashed line = ${Math.round(target / 7)} min/day to hit ${target}/week</div></div>
   </div>
 
   ${bpmSeries.length > 1 ? `<div class="sect">${sectionHead('Tempo ceiling')}
@@ -3199,6 +3208,300 @@ function schoolSheet(id) {
   }, sc ? `<button class="btn btn-block mb" style="color:#FF6B6B" onclick="closeSheet();delSchool('${sc.id}')">Remove</button>` : '');
 }
 function delSchool(id) { DB.schools = DB.schools.filter(s => s.id !== id); save(); }
+
+
+/* ═══════════════════════════════════════════════════════════════════
+   CLOUD SYNC — end-to-end encrypted, any device
+   ───────────────────────────────────────────────────────────────────
+   This page is public. So the rule is: the server never sees plaintext.
+   Everything is encrypted in the browser with a passphrase only Nick
+   knows (PBKDF2 -> AES-GCM). Even with the anon key and the row id,
+   an attacker gets a blob of ciphertext.
+
+   NOTHING here is committed: url, key, sync id and passphrase all live
+   in localStorage, entered on each device via Settings.
+   ═══════════════════════════════════════════════════════════════════ */
+const SYNC_KEY = 'nick_os_sync_cfg';           // deliberately NOT inside DB, so it never syncs
+const SYNC_TABLE = 'nick_os_sync';
+
+function syncCfg() {
+  try { return JSON.parse(localStorage.getItem(SYNC_KEY)) || {}; } catch (e) { return {}; }
+}
+function setSyncCfg(c) { localStorage.setItem(SYNC_KEY, JSON.stringify(c)); }
+const syncOn = () => { const c = syncCfg(); return !!(c.url && c.key && c.id && c.pass); };
+
+/* ── crypto ───────────────────────────────────────────────────── */
+const enc = new TextEncoder(), dec = new TextDecoder();
+async function deriveKey(pass, salt) {
+  const base = await crypto.subtle.importKey('raw', enc.encode(pass), 'PBKDF2', false, ['deriveKey']);
+  return crypto.subtle.deriveKey(
+    { name: 'PBKDF2', salt: enc.encode(salt), iterations: 250000, hash: 'SHA-256' },
+    base, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+}
+const b64 = buf => btoa(String.fromCharCode(...new Uint8Array(buf)));
+const unb64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+
+async function encryptBlob(obj, pass, salt) {
+  const key = await deriveKey(pass, salt);
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, enc.encode(JSON.stringify(obj)));
+  return b64(iv) + '.' + b64(ct);
+}
+async function decryptBlob(str, pass, salt) {
+  const [ivs, cts] = String(str).split('.');
+  if (!ivs || !cts) throw new Error('bad payload');
+  const key = await deriveKey(pass, salt);
+  const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: unb64(ivs) }, key, unb64(cts));
+  return JSON.parse(dec.decode(pt));
+}
+
+/* ── transport ────────────────────────────────────────────────── */
+function sbHeaders(c) {
+  return { apikey: c.key, Authorization: 'Bearer ' + c.key, 'Content-Type': 'application/json' };
+}
+let _syncState = { status: 'off', at: null, err: null };
+
+async function syncPush(silent = true) {
+  const c = syncCfg(); if (!syncOn()) return;
+  try {
+    _syncState.status = 'pushing'; paintSyncPill();
+    /* photos are megabytes of base64 — opt-in only */
+    const payload = c.photos ? DB : { ...DB, photos: [] };
+    const blob = await encryptBlob(payload, c.pass, c.id);
+    const r = await fetch(c.url.replace(/\/+$/, '') + '/rest/v1/' + SYNC_TABLE, {
+      method: 'POST',
+      headers: { ...sbHeaders(c), Prefer: 'resolution=merge-duplicates' },
+      body: JSON.stringify({ id: c.id, blob, updated_at: new Date().toISOString() }),
+    });
+    if (!r.ok) throw new Error('HTTP ' + r.status + ' ' + (await r.text().catch(() => '')).slice(0, 90));
+    _syncState = { status: 'ok', at: Date.now(), err: null };
+    if (!silent) toast('Synced up');
+  } catch (e) {
+    _syncState = { status: 'err', at: Date.now(), err: e.message };
+    if (!silent) toast('Sync failed — ' + e.message);
+  }
+  paintSyncPill();
+}
+
+async function syncPull(silent = true) {
+  const c = syncCfg(); if (!syncOn()) return false;
+  try {
+    _syncState.status = 'pulling'; paintSyncPill();
+    const r = await fetch(c.url.replace(/\/+$/, '') + '/rest/v1/' + SYNC_TABLE +
+      '?id=eq.' + encodeURIComponent(c.id) + '&select=blob,updated_at', { headers: sbHeaders(c) });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const rows = await r.json();
+    if (!rows.length || !rows[0].blob) {
+      _syncState = { status: 'ok', at: Date.now(), err: null };
+      paintSyncPill();
+      if (!silent) toast('Nothing saved yet — pushing this device up');
+      await syncPush(true);
+      return false;
+    }
+    let remote;
+    try { remote = await decryptBlob(rows[0].blob, c.pass, c.id); }
+    catch (e) { throw new Error('wrong passphrase for this sync ID'); }
+    DB = deepMerge(DEFAULTS(), remote);
+    localStorage.setItem(KEY, JSON.stringify(DB));
+    _syncState = { status: 'ok', at: Date.now(), err: null };
+    if (!silent) toast('Pulled from cloud');
+    render();
+    return true;
+  } catch (e) {
+    _syncState = { status: 'err', at: Date.now(), err: e.message };
+    if (!silent) toast('Pull failed — ' + e.message);
+    paintSyncPill();
+    return false;
+  }
+}
+
+/* debounced auto-push whenever anything changes */
+let _pushT = null;
+function syncQueue() {
+  if (!syncOn()) return;
+  clearTimeout(_pushT);
+  _pushT = setTimeout(() => syncPush(true), 2500);
+}
+
+function paintSyncPill() {
+  const el = $('syncPill'); if (!el) return;
+  if (!syncOn()) { el.classList.add('hidden'); return; }
+  el.classList.remove('hidden');
+  const m = { ok: ['☁️', 'var(--fit)'], pushing: ['↑', 'var(--money)'], pulling: ['↓', 'var(--money)'],
+              err: ['⚠', 'var(--danger)'], off: ['☁️', 'var(--text-3)'] }[_syncState.status] || ['☁️', 'var(--text-3)'];
+  el.textContent = m[0];
+  el.style.color = m[1];
+  el.title = _syncState.err || 'Synced';
+}
+
+/* ── settings UI ──────────────────────────────────────────────── */
+function syncSheet() {
+  const c = syncCfg();
+  const sql = `create table ${SYNC_TABLE} (
+  id text primary key,
+  blob text,
+  updated_at timestamptz default now()
+);
+alter table ${SYNC_TABLE} enable row level security;
+create policy rw on ${SYNC_TABLE}
+  for all to anon using (true) with check (true);`;
+  sheet('Cloud sync', `
+    <div class="card mb pad-sm">
+      <div class="sub" style="line-height:1.65">Your data is encrypted on this device before it is sent.
+      The server only ever stores ciphertext, so even someone holding the anon key
+      and your sync ID cannot read it without the passphrase.</div>
+    </div>
+
+    ${syncOn() ? `<div class="card mb pad-sm" style="--_c:var(--fit)">
+      <div class="kv"><span class="kv-k">Status</span><span class="kv-v" style="color:${_syncState.status === 'err' ? 'var(--danger)' : 'var(--fit)'}">${_syncState.status === 'err' ? 'Error' : 'Connected'}</span></div>
+      ${_syncState.err ? `<div class="li-s" style="white-space:normal;color:var(--danger)">${esc(_syncState.err)}</div>` : ''}
+      <div class="kv"><span class="kv-k">Sync ID</span><span class="kv-v fs11">${esc(c.id)}</span></div>
+    </div>
+    <div class="row mb" style="gap:8px">
+      <button class="btn grow" onclick="syncPull(false)">↓ Pull now</button>
+      <button class="btn grow" onclick="syncPush(false)">↑ Push now</button>
+    </div>` : ''}
+
+    <div class="field"><label class="field-l">Supabase project URL</label>
+      <input id="syUrl" value="${esc(c.url || '')}" placeholder="https://xxxx.supabase.co"></div>
+    <div class="field"><label class="field-l">Anon / publishable key</label>
+      <input id="syKey" value="${esc(c.key || '')}" placeholder="eyJhbGci…"></div>
+    <div class="field"><label class="field-l">Sync ID — same on every device</label>
+      <div class="row" style="gap:8px"><input id="syId" class="grow" value="${esc(c.id || '')}" placeholder="tap generate">
+        <button class="btn" onclick="genSyncId()">New</button></div></div>
+    <div class="field"><label class="field-l">Passphrase — never leaves this device</label>
+      <input id="syPass" type="password" value="${esc(c.pass || '')}" placeholder="something long you'll remember"></div>
+    <label class="row mb" style="gap:9px;cursor:pointer">
+      <button class="ck ${c.photos ? 'on' : ''}" id="syPhotos" style="--_c:var(--fit)" onclick="this.classList.toggle('on')"></button>
+      <span class="fs13">Also sync progress photos <span class="muted">(large — slower)</span></span></label>
+
+    <button class="btn btn-primary btn-block" id="sySave">Save & connect</button>
+    ${syncOn() ? `<button class="btn btn-block mt" style="color:#FF6B6B" onclick="closeSheet();disconnectSync()">Disconnect this device</button>` : ''}
+
+    <div class="sect" style="margin-top:22px">${sectionHead('One-time table setup')}
+      <div class="card pad-sm">
+        <div class="li-s" style="white-space:normal;margin-bottom:9px">Run this once in the Supabase SQL editor:</div>
+        <pre style="font-family:var(--mono);font-size:10.5px;line-height:1.5;color:var(--text-2);white-space:pre-wrap;overflow-x:auto">${esc(sql)}</pre>
+        <button class="btn btn-sm btn-block mt" onclick="copyText(\`${sql.replace(/`/g, '')}\`)">Copy SQL</button>
+      </div>
+    </div>
+
+    <button class="btn btn-block mt" onclick="closeSheet()">Close</button>`, () => {
+    if (!$('syId').value) genSyncId();
+    $('sySave').onclick = async () => {
+      const cfg = {
+        url: $('syUrl').value.trim(), key: $('syKey').value.trim(),
+        id: $('syId').value.trim(), pass: $('syPass').value,
+        photos: $('syPhotos').classList.contains('on'),
+      };
+      if (!cfg.url || !cfg.key || !cfg.id || !cfg.pass) { toast('Fill in all four fields'); return; }
+      if (cfg.pass.length < 8) { toast('Use a longer passphrase (8+)'); return; }
+      setSyncCfg(cfg);
+      closeSheet(); toast('Connecting…');
+      const pulled = await syncPull(false);
+      if (!pulled) await syncPush(false);
+      render();
+    };
+  });
+}
+function genSyncId() {
+  const id = 'nos_' + Array.from(crypto.getRandomValues(new Uint8Array(16)))
+    .map(b => b.toString(16).padStart(2, '0')).join('');
+  const el = $('syId'); if (el) el.value = id;
+}
+function disconnectSync() {
+  askConfirm('This device will stop syncing. Your data stays here, and stays in the cloud for your other devices.',
+    () => { localStorage.removeItem(SYNC_KEY); _syncState = { status: 'off', at: null, err: null }; render(); toast('Disconnected'); });
+}
+function copyText(t) { navigator.clipboard.writeText(t).then(() => toast('Copied')).catch(() => toast('Copy failed')); }
+
+/* ═══════════════════════════════════════════════════════════════════
+   HEVY — pull real workouts instead of typing them
+   Key lives in localStorage on this device only. Never committed.
+   ═══════════════════════════════════════════════════════════════════ */
+const HEVY_KEY = 'nick_os_hevy_key';
+const hevyKey = () => localStorage.getItem(HEVY_KEY) || '';
+const KG_TO_LB = 2.20462;
+
+function hevySheet() {
+  sheet('Hevy sync', `
+    <div class="card mb pad-sm">
+      <div class="sub" style="line-height:1.65">Pulls your logged workouts straight from Hevy — sets, reps and weights —
+        so training data lands here without retyping. PRs are detected automatically.</div>
+    </div>
+    <div class="field"><label class="field-l">Hevy API key</label>
+      <input id="hvKey" type="password" value="${esc(hevyKey())}" placeholder="paste from Hevy → Settings → Developer"></div>
+    <div class="card mb pad-sm" style="--_c:var(--warning)">
+      <div class="li-s" style="white-space:normal">Stored only in this browser. It is never sent anywhere except Hevy,
+        and never written into the repository.</div>
+    </div>
+    <button class="btn btn-primary btn-block" id="hvGo">Save & sync now</button>
+    <button class="btn btn-block mt" onclick="closeSheet()">Close</button>`, () => {
+    $('hvGo').onclick = async () => {
+      const k = $('hvKey').value.trim();
+      if (!k) { toast('Paste your key first'); return; }
+      localStorage.setItem(HEVY_KEY, k);
+      closeSheet();
+      await hevyPull();
+    };
+  });
+}
+
+async function hevyPull() {
+  const k = hevyKey();
+  if (!k) { hevySheet(); return; }
+  toast('Pulling from Hevy…');
+  try {
+    const sessions = [];
+    for (let page = 1; page <= 10; page++) {
+      const r = await fetch(`https://api.hevyapp.com/v1/workouts?page=${page}&pageSize=10`,
+        { headers: { 'api-key': k, accept: 'application/json' } });
+      if (!r.ok) throw new Error('Hevy returned ' + r.status + (r.status === 401 ? ' — key rejected' : ''));
+      const data = await r.json();
+      const ws = data.workouts || [];
+      ws.forEach(w => sessions.push(w));
+      if (ws.length < 10) break;
+    }
+    let added = 0, prs = 0;
+    const toLb = DB.profile.unit === 'lb';
+    sessions.forEach(w => {
+      const date = (w.start_time || w.created_at || '').slice(0, 10);
+      if (!date) return;
+      if (DB.workouts.some(x => x.hv === w.id)) return;           // already imported
+      const ex = (w.exercises || []).map(e => ({
+        name: e.title || 'Exercise',
+        sets: (e.sets || []).filter(s => s.reps).map(s => ({
+          w: round((Number(s.weight_kg) || 0) * (toLb ? KG_TO_LB : 1), 1), r: Number(s.reps) || 0,
+        })),
+      })).filter(e => e.sets.length);
+      const dur = w.end_time && w.start_time
+        ? Math.round((new Date(w.end_time) - new Date(w.start_time)) / 60000) : 0;
+      const cyc = DB.split.cycle.findIndex(c => (w.title || '').toLowerCase().includes(c.toLowerCase()));
+      DB.workouts.push({ id: uid(), hv: w.id, date, name: w.title || 'Workout',
+                         dur, notes: w.description || '', ex, cyc: cyc >= 0 ? cyc : null });
+      added++;
+      /* PR detection on the way in */
+      ex.forEach(e => e.sets.forEach(s => {
+        const best = DB.prs.filter(p => p.ex.toLowerCase() === e.name.toLowerCase())
+          .reduce((m, p) => Math.max(m, e1rm(p.w, p.r)), 0);
+        if (s.w > 0 && e1rm(s.w, s.r) > best) {
+          DB.prs = DB.prs.filter(p => p.ex.toLowerCase() !== e.name.toLowerCase());
+          DB.prs.push({ id: uid(), ex: e.name, w: s.w, r: s.r, date });
+          prs++;
+        }
+      }));
+    });
+    DB.workouts.sort((a, b) => a.date.localeCompare(b.date));
+    localStorage.setItem('nick_os_hevy_at', String(Date.now()));
+    logScore(); save();
+    toast(added ? `Imported ${added} workout${added === 1 ? '' : 's'}${prs ? ` · ${prs} PRs` : ''}` : 'Already up to date');
+  } catch (e) {
+    const msg = /Failed to fetch|NetworkError|CORS/i.test(e.message)
+      ? 'Hevy blocked the request from the browser. Check the key, or try again on another network.'
+      : e.message;
+    toast('Hevy sync failed — ' + msg);
+  }
+}
 
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -3523,6 +3826,10 @@ function settingsSheet() {
      <div class="kv"><span class="kv-k">Journal entries</span><span class="kv-v">${DB.journal.length}</span></div>
      <div class="kv"><span class="kv-k">Approx. size</span><span class="kv-v">${round(JSON.stringify(DB).length / 1024)} KB</span></div>
    </div>
+   <div class="row mb" style="gap:8px">
+     <button class="btn grow" onclick="closeSheet();syncSheet()">☁️ Cloud sync</button>
+     <button class="btn grow" onclick="closeSheet();hevySheet()">Hevy</button>
+   </div>
    <button class="btn btn-block mb" style="color:#FF6B6B" onclick="closeSheet();resetAll()">Erase everything</button>`);
 }
 function exportData() {
@@ -3606,6 +3913,8 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape') closeSheet()
   /* re-score at midnight-ish so the day rolls over while the tab is open */
   setInterval(() => { const t = today(); if (t !== boot._d) { boot._d = t; logScore(); render(); } }, 60000);
   boot._d = today();
+  /* if this device is linked, the cloud is the source of truth on open */
+  if (syncOn()) syncPull(true);
 })();
 
 </script>
