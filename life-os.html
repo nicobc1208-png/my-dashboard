@@ -3357,10 +3357,23 @@ create policy rw on ${SYNC_TABLE}
       ${_syncState.err ? `<div class="li-s" style="white-space:normal;color:var(--danger)">${esc(_syncState.err)}</div>` : ''}
       <div class="kv"><span class="kv-k">Sync ID</span><span class="kv-v fs11">${esc(c.id)}</span></div>
     </div>
+    <div class="card mb pad-sm" style="--_c:var(--money)">
+      <div class="eyebrow mb">Add another device</div>
+      <div class="li-s" style="white-space:normal;margin-bottom:9px">Copy this into Nick OS on your laptop or iPad,
+        then type your passphrase there. The code does not contain the passphrase.</div>
+      <div style="font-family:var(--mono);font-size:10px;word-break:break-all;color:var(--text-2);
+        background:var(--surface-2);padding:9px;border-radius:9px">${esc(makeSyncCode())}</div>
+      <button class="btn btn-sm btn-block mt" onclick="copyText('${makeSyncCode()}')">Copy sync code</button>
+    </div>
     <div class="row mb" style="gap:8px">
       <button class="btn grow" onclick="syncPull(false)">↓ Pull now</button>
       <button class="btn grow" onclick="syncPush(false)">↑ Push now</button>
     </div>` : ''}
+
+    <div class="field"><label class="field-l">Have a sync code from another device?</label>
+      <div class="row" style="gap:8px"><input id="syCode" class="grow" placeholder="NOS1-…">
+        <button class="btn" onclick="applySyncCode()">Use</button></div></div>
+    <div class="li-s tc mb" style="white-space:normal">— or set it up from scratch —</div>
 
     <div class="field"><label class="field-l">Supabase project URL</label>
       <input id="syUrl" value="${esc(c.url || '')}" placeholder="https://xxxx.supabase.co"></div>
@@ -3375,6 +3388,10 @@ create policy rw on ${SYNC_TABLE}
       <button class="ck ${c.photos ? 'on' : ''}" id="syPhotos" style="--_c:var(--fit)" onclick="this.classList.toggle('on')"></button>
       <span class="fs13">Also sync progress photos <span class="muted">(large — slower)</span></span></label>
 
+    <div class="row mb" style="gap:8px">
+      <button class="btn grow" onclick="testSync()">Test connection</button>
+    </div>
+    <div id="syTest" class="li-s mb" style="white-space:normal;min-height:16px"></div>
     <button class="btn btn-primary btn-block" id="sySave">Save & connect</button>
     ${syncOn() ? `<button class="btn btn-block mt" style="color:#FF6B6B" onclick="closeSheet();disconnectSync()">Disconnect this device</button>` : ''}
 
@@ -3403,6 +3420,41 @@ create policy rw on ${SYNC_TABLE}
       render();
     };
   });
+}
+/* Pairing code carries endpoint + sync ID, never the passphrase.
+   Device 2 pastes one string instead of retyping three fields. */
+function makeSyncCode() {
+  const c = syncCfg();
+  if (!c.url || !c.key || !c.id) return '';
+  return 'NOS1-' + btoa(JSON.stringify({ u: c.url, k: c.key, i: c.id })).replace(/=+$/, '');
+}
+function applySyncCode() {
+  const raw = ($('syCode') ? $('syCode').value : '').trim();
+  if (!raw.startsWith('NOS1-')) { toast('That is not a sync code'); return; }
+  try {
+    const o = JSON.parse(atob(raw.slice(5)));
+    $('syUrl').value = o.u || ''; $('syKey').value = o.k || ''; $('syId').value = o.i || '';
+    toast('Code accepted — now enter your passphrase');
+    if ($('syPass')) $('syPass').focus();
+  } catch (e) { toast('That code is damaged'); }
+}
+/* precise diagnostics beat "sync failed" */
+async function testSync() {
+  const url = $('syUrl').value.trim(), key = $('syKey').value.trim(), id = $('syId').value.trim();
+  if (!url || !key) { toast('URL and key first'); return; }
+  const out = $('syTest'); out.textContent = 'Testing…'; out.style.color = 'var(--text-3)';
+  const say = (msg, ok) => { out.textContent = msg; out.style.color = ok ? 'var(--fit)' : 'var(--danger)'; };
+  try {
+    const r = await fetch(url.replace(/\/+$/, '') + '/rest/v1/' + SYNC_TABLE +
+      '?id=eq.' + encodeURIComponent(id || 'probe') + '&select=id', { headers: sbHeaders({ key }) });
+    if (r.status === 401 || r.status === 403) return say('Key rejected (401/403) — wrong anon key, or RLS blocks it.', false);
+    if (r.status === 404) return say(`Table "${SYNC_TABLE}" not found — run the SQL below first.`, false);
+    if (!r.ok) return say('Server said HTTP ' + r.status + '.', false);
+    const rows = await r.json();
+    say(rows.length ? 'Connected — existing data found for this sync ID.' : 'Connected — table is reachable and empty.', true);
+  } catch (e) {
+    say('Could not reach the project. Check the URL is https://xxxx.supabase.co', false);
+  }
 }
 function genSyncId() {
   const id = 'nos_' + Array.from(crypto.getRandomValues(new Uint8Array(16)))
