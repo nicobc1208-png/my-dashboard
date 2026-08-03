@@ -3475,84 +3475,238 @@ const HEVY_KEY = 'nick_os_hevy_key';
 const hevyKey = () => localStorage.getItem(HEVY_KEY) || '';
 const KG_TO_LB = 2.20462;
 
+function hevySay(msg, tone) {
+  const el = $('hvOut'); if (!el) { toast(msg); return; }
+  el.style.whiteSpace = 'normal';
+  el.style.color = tone === 'ok' ? 'var(--fit)' : tone === 'warn' ? 'var(--warning)' : 'var(--danger)';
+  el.innerHTML = msg;
+}
 function hevySheet() {
-  sheet('Hevy sync', `
-    <div class="card mb pad-sm">
-      <div class="sub" style="line-height:1.65">Pulls your logged workouts straight from Hevy — sets, reps and weights —
-        so training data lands here without retyping. PRs are detected automatically.</div>
+  sheet('Hevy', `
+    <div class="seg mb">
+      <button class="seg-btn active" onclick="hevyTab('api',this)">Auto sync</button>
+      <button class="seg-btn" onclick="hevyTab('csv',this)">Import file</button>
     </div>
-    <div class="field"><label class="field-l">Hevy API key</label>
-      <input id="hvKey" type="password" value="${esc(hevyKey())}" placeholder="paste from Hevy → Settings → Developer"></div>
-    <div class="card mb pad-sm" style="--_c:var(--warning)">
-      <div class="li-s" style="white-space:normal">Stored only in this browser. It is never sent anywhere except Hevy,
-        and never written into the repository.</div>
+
+    <div id="hvApi">
+      <div class="field"><label class="field-l">Hevy API key</label>
+        <input id="hvKey" type="password" value="${esc(hevyKey())}" placeholder="Hevy → Settings → Developer"></div>
+      <div class="row mb" style="gap:8px">
+        <button class="btn grow" onclick="hevyDiagnose()">Test connection</button>
+        <button class="btn btn-primary grow" onclick="hevySaveAndPull()">Save & sync</button>
+      </div>
+      <div id="hvOut" class="li-s mb" style="white-space:normal;min-height:18px;line-height:1.6"></div>
+      <div class="card pad-sm" style="--_c:var(--warning)">
+        <div class="li-s" style="white-space:normal;line-height:1.6">Two things commonly block this:
+          the Hevy API needs a <b>Hevy Pro</b> subscription, and Hevy may refuse requests coming
+          straight from a browser. If Test connection reports either, use <b>Import file</b> —
+          it works with no API at all.</div>
+      </div>
     </div>
-    <button class="btn btn-primary btn-block" id="hvGo">Save & sync now</button>
+
+    <div id="hvCsv" class="hidden">
+      <div class="card mb pad-sm">
+        <div class="sub" style="line-height:1.65">In the Hevy app: <b>Settings → Export &amp; Import Data →
+          Export Workout Data</b>. Save the CSV, then load it here. Everything imports —
+          sets, reps, weights — and re-importing the same file is safe.</div>
+      </div>
+      <input type="file" id="hvFile" accept=".csv,text/csv" class="hidden">
+      <button class="btn btn-primary btn-block" onclick="document.getElementById('hvFile').click()">Choose CSV file</button>
+      <div id="hvCsvOut" class="li-s mt" style="white-space:normal;min-height:18px;line-height:1.6"></div>
+    </div>
+
     <button class="btn btn-block mt" onclick="closeSheet()">Close</button>`, () => {
-    $('hvGo').onclick = async () => {
-      const k = $('hvKey').value.trim();
-      if (!k) { toast('Paste your key first'); return; }
-      localStorage.setItem(HEVY_KEY, k);
-      closeSheet();
-      await hevyPull();
-    };
+    $('hvFile').onchange = e => { const f = e.target.files[0]; if (f) hevyImportCSV(f); e.target.value = ''; };
   });
 }
+function hevyTab(t, btn) {
+  $('hvApi').classList.toggle('hidden', t !== 'api');
+  $('hvCsv').classList.toggle('hidden', t !== 'csv');
+  [...btn.parentNode.children].forEach(b => b.classList.toggle('active', b === btn));
+}
+function hevySaveAndPull() {
+  const k = ($('hvKey').value || '').trim();
+  if (!k) { hevySay('Paste your key first.', 'err'); return; }
+  localStorage.setItem(HEVY_KEY, k);
+  hevyPull(true);
+}
 
-async function hevyPull() {
+/* say exactly what went wrong, because "failed" is useless */
+async function hevyDiagnose() {
+  const k = ($('hvKey') ? $('hvKey').value.trim() : hevyKey());
+  if (!k) { hevySay('Paste your key first.', 'err'); return; }
+  hevySay('Testing…', 'warn');
+  let r;
+  try {
+    r = await fetch('https://api.hevyapp.com/v1/workouts?page=1&pageSize=1',
+      { headers: { 'api-key': k, accept: 'application/json' } });
+  } catch (e) {
+    hevySay('<b>Blocked before it reached Hevy.</b> That is the browser refusing the request ' +
+      '(CORS), not a bad key — the same key would work from a server. ' +
+      'Use <b>Import file</b> instead; it needs no API.', 'err');
+    return;
+  }
+  if (r.status === 401) return hevySay('<b>401 — key rejected.</b> Regenerate it in Hevy → Settings → Developer and paste the new one.', 'err');
+  if (r.status === 403) return hevySay('<b>403 — access denied.</b> The Hevy API is a Hevy Pro feature; without Pro the key will not work. Use <b>Import file</b>.', 'err');
+  if (r.status === 429) return hevySay('<b>429 — rate limited.</b> Wait a minute and try again.', 'warn');
+  if (!r.ok) return hevySay('<b>HTTP ' + r.status + '</b> from Hevy. Try <b>Import file</b>.', 'err');
+  try {
+    const d = await r.json();
+    const n = (d.page_count != null ? d.page_count : '?');
+    hevySay('<b>Connected.</b> Hevy answered with ' + n + ' page(s) of workouts. Hit <b>Save &amp; sync</b>.', 'ok');
+  } catch (e) { hevySay('Connected, but the response was not readable JSON.', 'warn'); }
+}
+
+async function hevyPull(fromSheet) {
   const k = hevyKey();
   if (!k) { hevySheet(); return; }
-  toast('Pulling from Hevy…');
+  const report = m => fromSheet ? hevySay(m, 'err') : toast(m.replace(/<[^>]+>/g, ''));
+  if (!fromSheet) toast('Pulling from Hevy…');
   try {
     const sessions = [];
     for (let page = 1; page <= 10; page++) {
-      const r = await fetch(`https://api.hevyapp.com/v1/workouts?page=${page}&pageSize=10`,
-        { headers: { 'api-key': k, accept: 'application/json' } });
-      if (!r.ok) throw new Error('Hevy returned ' + r.status + (r.status === 401 ? ' — key rejected' : ''));
+      let r;
+      try {
+        r = await fetch(`https://api.hevyapp.com/v1/workouts?page=${page}&pageSize=10`,
+          { headers: { 'api-key': k, accept: 'application/json' } });
+      } catch (e) {
+        report('<b>Browser blocked the request (CORS).</b> Not your key. Open Hevy settings here and use <b>Import file</b>.');
+        return;
+      }
+      if (r.status === 401) { report('<b>401 — key rejected.</b> Regenerate it in Hevy and paste the new one.'); return; }
+      if (r.status === 403) { report('<b>403 — the Hevy API needs Hevy Pro.</b> Use <b>Import file</b> instead.'); return; }
+      if (!r.ok) { report('<b>HTTP ' + r.status + '</b> from Hevy.'); return; }
       const data = await r.json();
       const ws = data.workouts || [];
       ws.forEach(w => sessions.push(w));
       if (ws.length < 10) break;
     }
-    let added = 0, prs = 0;
-    const toLb = DB.profile.unit === 'lb';
-    sessions.forEach(w => {
-      const date = (w.start_time || w.created_at || '').slice(0, 10);
-      if (!date) return;
-      if (DB.workouts.some(x => x.hv === w.id)) return;           // already imported
-      const ex = (w.exercises || []).map(e => ({
+    const { added, prs } = ingestHevy(sessions.map(w => ({
+      key: w.id, date: (w.start_time || w.created_at || '').slice(0, 10), title: w.title,
+      dur: w.end_time && w.start_time ? Math.round((new Date(w.end_time) - new Date(w.start_time)) / 60000) : 0,
+      ex: (w.exercises || []).map(e => ({
         name: e.title || 'Exercise',
-        sets: (e.sets || []).filter(s => s.reps).map(s => ({
-          w: round((Number(s.weight_kg) || 0) * (toLb ? KG_TO_LB : 1), 1), r: Number(s.reps) || 0,
-        })),
-      })).filter(e => e.sets.length);
-      const dur = w.end_time && w.start_time
-        ? Math.round((new Date(w.end_time) - new Date(w.start_time)) / 60000) : 0;
-      const cyc = DB.split.cycle.findIndex(c => (w.title || '').toLowerCase().includes(c.toLowerCase()));
-      DB.workouts.push({ id: uid(), hv: w.id, date, name: w.title || 'Workout',
-                         dur, notes: w.description || '', ex, cyc: cyc >= 0 ? cyc : null });
-      added++;
-      /* PR detection on the way in */
-      ex.forEach(e => e.sets.forEach(s => {
-        const best = DB.prs.filter(p => p.ex.toLowerCase() === e.name.toLowerCase())
-          .reduce((m, p) => Math.max(m, e1rm(p.w, p.r)), 0);
-        if (s.w > 0 && e1rm(s.w, s.r) > best) {
-          DB.prs = DB.prs.filter(p => p.ex.toLowerCase() !== e.name.toLowerCase());
-          DB.prs.push({ id: uid(), ex: e.name, w: s.w, r: s.r, date });
-          prs++;
-        }
-      }));
-    });
-    DB.workouts.sort((a, b) => a.date.localeCompare(b.date));
-    localStorage.setItem('nick_os_hevy_at', String(Date.now()));
-    logScore(); save();
-    toast(added ? `Imported ${added} workout${added === 1 ? '' : 's'}${prs ? ` · ${prs} PRs` : ''}` : 'Already up to date');
+        sets: (e.sets || []).filter(s => s.reps).map(s => ({ kg: Number(s.weight_kg) || 0, r: Number(s.reps) || 0 })),
+      })),
+    })));
+    const msg = added ? `Imported ${added} workout${added === 1 ? '' : 's'}${prs ? ` · ${prs} PRs` : ''}` : 'Already up to date';
+    if (fromSheet) hevySay('<b>' + msg + '</b>', 'ok'); else toast(msg);
   } catch (e) {
-    const msg = /Failed to fetch|NetworkError|CORS/i.test(e.message)
-      ? 'Hevy blocked the request from the browser. Check the key, or try again on another network.'
-      : e.message;
-    toast('Hevy sync failed — ' + msg);
+    report('Unexpected error: ' + esc(e.message));
   }
+}
+
+/* shared ingest for both API and CSV — weights arrive in kg */
+function ingestHevy(items) {
+  const toLb = DB.profile.unit === 'lb';
+  let added = 0, prs = 0;
+  items.forEach(it => {
+    if (!it.date || !it.key) return;
+    if (DB.workouts.some(x => x.hv === it.key)) return;
+    const ex = it.ex.map(e => ({
+      name: e.name,
+      sets: e.sets.map(s => ({ w: round(s.kg * (toLb ? KG_TO_LB : 1), 1), r: s.r })),
+    })).filter(e => e.sets.length);
+    if (!ex.length) return;
+    const cyc = DB.split.cycle.findIndex(c => (it.title || '').toLowerCase().includes(c.toLowerCase()));
+    DB.workouts.push({ id: uid(), hv: it.key, date: it.date, name: it.title || 'Workout',
+                       dur: it.dur || 0, notes: '', ex, cyc: cyc >= 0 ? cyc : null });
+    added++;
+    ex.forEach(e => e.sets.forEach(s => {
+      const best = DB.prs.filter(p => p.ex.toLowerCase() === e.name.toLowerCase())
+        .reduce((m, p) => Math.max(m, e1rm(p.w, p.r)), 0);
+      if (s.w > 0 && e1rm(s.w, s.r) > best) {
+        DB.prs = DB.prs.filter(p => p.ex.toLowerCase() !== e.name.toLowerCase());
+        DB.prs.push({ id: uid(), ex: e.name, w: s.w, r: s.r, date: it.date });
+        prs++;
+      }
+    }));
+  });
+  if (added) { DB.workouts.sort((a, b) => a.date.localeCompare(b.date)); logScore(); save(); }
+  return { added, prs };
+}
+
+/* ── CSV import — no API, no key, works for everyone ──────────── */
+function parseCSV(text) {
+  const rows = []; let row = [], cell = '', q = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (q) {
+      if (ch === '"') { if (text[i + 1] === '"') { cell += '"'; i++; } else q = false; }
+      else cell += ch;
+    } else if (ch === '"') q = true;
+    else if (ch === ',') { row.push(cell); cell = ''; }
+    else if (ch === '\n') { row.push(cell); rows.push(row); row = []; cell = ''; }
+    else if (ch !== '\r') cell += ch;
+  }
+  if (cell || row.length) { row.push(cell); rows.push(row); }
+  return rows.filter(r => r.length > 1);
+}
+function hevyImportCSV(file) {
+  const out = m => { const el = $('hvCsvOut'); if (el) el.innerHTML = m; else toast(m.replace(/<[^>]+>/g, '')); };
+  out('Reading…');
+  const rd = new FileReader();
+  rd.onload = ev => {
+    try {
+      const rows = parseCSV(String(ev.target.result));
+      if (rows.length < 2) { out('<span style="color:var(--danger)">That file looks empty.</span>'); return; }
+      const head = rows[0].map(h => h.trim().toLowerCase().replace(/^"|"$/g, ''));
+      const col = (...names) => { for (const n of names) { const i = head.indexOf(n); if (i >= 0) return i; } return -1; };
+      const cTitle = col('title', 'workout_name'), cStart = col('start_time', 'date'),
+            cEnd = col('end_time'), cEx = col('exercise_title', 'exercise_name', 'exercise'),
+            cReps = col('reps'), cKg = col('weight_kg'), cLb = col('weight_lbs', 'weight_lb');
+      if (cEx < 0 || cReps < 0 || cStart < 0) {
+        out('<span style="color:var(--danger)">Unrecognised columns. Expected a Hevy workout export with ' +
+            'start_time, exercise_title and reps.<br>Found: ' + esc(head.slice(0, 8).join(', ')) + '</span>');
+        return;
+      }
+      const byWorkout = {};
+      for (let i = 1; i < rows.length; i++) {
+        const r = rows[i]; if (!r[cStart]) continue;
+        const startRaw = r[cStart].trim();
+        const date = parseHevyDate(startRaw);
+        if (!date) continue;
+        const key = 'csv:' + startRaw;
+        const wo = byWorkout[key] || (byWorkout[key] = {
+          key, date, title: cTitle >= 0 ? r[cTitle] : 'Workout', dur: 0, ex: [], _end: cEnd >= 0 ? r[cEnd] : null,
+        });
+        const reps = Number(r[cReps]); if (!reps) continue;
+        const kg = cKg >= 0 && r[cKg] !== '' ? Number(r[cKg])
+                 : cLb >= 0 && r[cLb] !== '' ? Number(r[cLb]) / KG_TO_LB : 0;
+        const name = (r[cEx] || 'Exercise').trim();
+        let e = wo.ex.find(x => x.name === name);
+        if (!e) { e = { name, sets: [] }; wo.ex.push(e); }
+        e.sets.push({ kg: isNaN(kg) ? 0 : kg, r: reps });
+      }
+      const list = Object.values(byWorkout);
+      list.forEach(w => {
+        if (w._end) { const a = new Date(w.key.slice(4)), b = new Date(w._end);
+          if (!isNaN(a) && !isNaN(b)) w.dur = Math.max(0, Math.round((b - a) / 60000)); }
+      });
+      const { added, prs } = ingestHevy(list);
+      out(added
+        ? `<span style="color:var(--fit)"><b>Imported ${added} workout${added === 1 ? '' : 's'}</b>` +
+          `${prs ? ` · ${prs} PRs detected` : ''} from ${list.length} found in the file.</span>`
+        : `<span style="color:var(--warning)">Found ${list.length} workouts — all of them were already imported.</span>`);
+    } catch (e) {
+      out('<span style="color:var(--danger)">Could not read that file: ' + esc(e.message) + '</span>');
+    }
+  };
+  rd.onerror = () => out('<span style="color:var(--danger)">Could not open the file.</span>');
+  rd.readAsText(file);
+}
+/* Hevy exports have used several date formats over the years */
+function parseHevyDate(s) {
+  if (!s) return null;
+  let m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);                       // 2026-08-03…
+  if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+  m = s.match(/^(\d{1,2})\s+([A-Za-z]{3})\s+(\d{4})/);               // 3 Aug 2026
+  if (m) { const mo = MON.findIndex(x => x.toLowerCase() === m[2].toLowerCase());
+    if (mo >= 0) return `${m[3]}-${String(mo + 1).padStart(2, '0')}-${m[1].padStart(2, '0')}`; }
+  m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);                     // 08/03/2026 (US)
+  if (m) return `${m[3]}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}`;
+  const d = new Date(s);
+  return isNaN(d) ? null : ymd(d);
 }
 
 
