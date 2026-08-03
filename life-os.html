@@ -479,7 +479,7 @@ const kmoney = n => {
 const KEY = 'nick_os_v1';
 const DEFAULTS = () => ({
   v: 1,
-  profile: { name: 'Nick', currency: '$', unit: 'lb', heightIn: 70, tz: 'local', boot: today() },
+  profile: { name: 'Nick', currency: '$', unit: 'lb', heightIn: 65, age: 18, milk: 'whole', boot: today() },
   ui: { tab: 'home', sub: {} },
 
   /* daily */
@@ -498,8 +498,10 @@ const DEFAULTS = () => ({
   photos: [],                // [{id,date,data,note}]
   prs: [],                   // [{id,ex,w,r,date}]
   nutrition: {},             // date -> {kcal,p,c,f,water}
-  nutTarget: { kcal: 2400, p: 180, c: 250, f: 75, water: 12 },
-  plan: [],                  // [{day:0-6,name,focus}]
+  nutTarget: { kcal: 2900, p: 130, c: 425, f: 80, water: 16, milk: 5.3 },
+  bulk: { goalWeight: 132, rateMin: 0.25, rateMax: 0.5 },
+  split: { name: 'ULPPL', cycle: ['Upper', 'Lower', 'Push', 'Pull', 'Legs', 'Rest'], target: 6 },
+  foods: [],                 // saved foods for one-tap reuse
 
   /* business */
   leads: [],                 // [{id,name,company,phone,email,src,stage,value,note,next,biz,ts}]
@@ -507,6 +509,8 @@ const DEFAULTS = () => ({
   projects: [],              // [{id,name,biz,client,status,due,value,note}]
   revenue: [],               // [{id,date,amt,biz,client,note,recurring}]
   ideas: [],                 // [{id,t,note,ease,impact,ts,status}]
+  services: [],              // [{id,name,price,type:'once'|'monthly'}]
+  ventures: [['nd','Nick Digital'],['pw','PureWash Pro'],['side','Side hustles']],
 
   /* money */
   tx: [],                    // [{id,date,amt,type:'in'|'out',cat,note}]
@@ -521,9 +525,12 @@ const DEFAULTS = () => ({
   assign: [],                // [{id,t,course,due,done,type,weight}]
   exams: [],                 // [{id,t,course,date,note}]
   college: [],               // [{id,t,done,due,note}]
+  schools: [],               // [{id,name,type,deadline,status,note}]
+  schoolYear: { start: '2026-09-01', grade: 'senior' },
 
   /* music */
-  drum: [],                  // [{id,date,mins,focus,bpm,note}]
+  drum: [],                  // [{id,date,inst,mins,focus,bpm,note}]
+  music: { drumTarget: 200, guitarTarget: 100 },
   songs: [],                 // [{id,t,artist,status,note}]
   gigs: [],                  // [{id,t,date,note,status}]
 
@@ -578,8 +585,8 @@ function importLegacy() {
     /* nutrition — po_nutrition_v1 */
     const nut = lsGet('po_nutrition_v1', null);
     if (nut && nut.logs) {
-      DB.nutTarget = { kcal: nut.calGoal || 2400, p: nut.pGoal || 180, c: nut.cGoal || 250,
-                       f: nut.fGoal || 75, water: DB.nutTarget.water };
+      /* deliberately NOT importing the old goals — the new targets are
+         computed for the lean bulk and are the ones Nick actually wants */
       for (const d in nut.logs) {
         const items = nut.logs[d] || [];
         if (!items.length) continue;
@@ -634,8 +641,7 @@ function importLegacy() {
       n++;
     });
 
-    /* today's goals -> tasks (scan goals:DATE keys; start a few days ahead so
-       the old dashboard's day-rollover never hides an entry from us) */
+    /* today's goals -> tasks (scan the last 60 days of goals:DATE keys) */
     for (let i = -3; i < 60; i++) {
       const d = addDays(today(), -i);
       const g = lsGet('goals:' + d, null);
@@ -906,17 +912,18 @@ function scores(d = today()) {
 
   /* ── BODY: trained this week, protein, water, weighed in ───── */
   const wTrained = wk.filter(k => DB.workouts.some(w => w.date === k)).length;
-  const nut = DB.nutrition[d] || {};
+  const nt = nutTotals(d), nd = nutDay(d);
   const fit = avg([
-    pct(wTrained, 4),                                    // 4 sessions/wk target
-    pct(nut.p || 0, DB.nutTarget.p),
-    pct(nut.water || 0, DB.nutTarget.water),
+    pct(wTrained, DB.split.target),                      // ULPPL, 6x/week
+    pct(nt.p, DB.nutTarget.p),
+    pct(nt.kcal, DB.nutTarget.kcal),                     // bulking: eating enough IS the work
+    pct(nd.water, DB.nutTarget.water),
     DB.weights.some(w => wk.includes(w.date)) ? 100 : 0,
   ]);
 
   /* ── WORK: dials, pipeline hygiene, revenue vs monthly goal ── */
   const c = DB.calls[d] || {};
-  const revGoal = (DB.goals.find(g => g.dom === 'biz' && !g.done && g.unit === '$') || {}).target || 2000;
+  const revGoal = (DB.goals.find(g => g.dom === 'biz' && !g.done && g.unit === '$') || {}).target || 10000;
   const monthRev = sum(DB.revenue.filter(r => r.date.startsWith(mk)).map(r => r.amt));
   const overdueFollow = DB.leads.filter(l => l.next && l.next < d && !['won', 'lost'].includes(l.stage)).length;
   const biz = avg([
@@ -951,8 +958,9 @@ function scores(d = today()) {
   ]);
 
   /* ── MUSIC: minutes this week vs 150 ───────────────────────── */
-  const wkMins = sum(DB.drum.filter(s => wk.includes(s.date)).map(s => s.mins));
-  const music = avg([pct(wkMins, 150), pct(DB.drum.filter(s => wk.includes(s.date)).length, 4)]);
+  const drumMins = sum(DB.drum.filter(s => wk.includes(s.date) && (s.inst || 'drums') === 'drums').map(s => s.mins));
+  const gtrMins  = sum(DB.drum.filter(s => wk.includes(s.date) && s.inst === 'guitar').map(s => s.mins));
+  const music = avg([pct(drumMins, DB.music.drumTarget), pct(gtrMins, DB.music.guitarTarget)]);
 
   /* ── GROWTH: habits, journal, reading, tasks done ──────────── */
   const hTot = DB.habits.length;
@@ -1089,11 +1097,11 @@ RENDERERS.home = function () {
   const netWorth = sum(DB.assets.filter(a => a.type !== 'debt').map(a => a.val)) -
                    sum(DB.assets.filter(a => a.type === 'debt').map(a => a.val));
   const openLeads = DB.leads.filter(l => !['won', 'lost'].includes(l.stage)).length;
-  const nutT = DB.nutrition[d] || {};
+  const nutT = nutTotals(d);
 
   const tiles = `<div class="grid g2 stagger">
     <div class="tile" style="--_c:var(--fit)" onclick="go('fitness')">
-      <span class="tile-i">🏋️</span><div class="tile-v">${trained}<small style="font-size:14px;color:var(--text-3)">/4</small></div>
+      <span class="tile-i">🏋️</span><div class="tile-v">${trained}<small style="font-size:14px;color:var(--text-3)">/${DB.split.target}</small></div>
       <div class="tile-l">Trained</div>
       <div class="tile-s">${bw != null ? bw + ' ' + DB.profile.unit : 'log a weigh-in'}</div></div>
 
@@ -1110,7 +1118,7 @@ RENDERERS.home = function () {
     <div class="tile" style="--_c:var(--fit)" onclick="go('fitness','fuel')">
       <span class="tile-i">🍗</span><div class="tile-v">${Math.round(nutT.p || 0)}<small style="font-size:14px;color:var(--text-3)">g</small></div>
       <div class="tile-l">Protein</div>
-      <div class="tile-s">of ${DB.nutTarget.p}g · ${Math.round(nutT.water || 0)}/${DB.nutTarget.water} water</div></div>
+      <div class="tile-s">of ${DB.nutTarget.p}g · ${Math.round(nutT.kcal)}/${DB.nutTarget.kcal} kcal</div></div>
   </div>`;
 
   /* ── goals ── */
@@ -1195,7 +1203,8 @@ function suggestFocus(s, openT) {
   if (overdue.length) return { title: overdue[0].t, why: `Overdue for ${overdue[0].course || 'school'} — clear it before it compounds.`, color: 'var(--school)' };
   const follow = DB.leads.filter(l => l.next && l.next <= d && !['won', 'lost'].includes(l.stage));
   if (follow.length) return { title: 'Follow up with ' + follow[0].name, why: 'A lead is waiting on you. Money is in the follow-up.', color: 'var(--biz)' };
-  if (!DB.workouts.some(w => w.date === d)) return { title: 'Train today', why: 'No session logged yet. The gym is the anchor everything else hangs off.', color: 'var(--fit)' };
+  if (!DB.workouts.some(w => w.date === d)) return { title: nextSession().name + ' day', why: 'Next in your ULPPL rotation. The gym is the anchor everything else hangs off.', color: 'var(--fit)' };
+  if (nutTotals(d).kcal < DB.nutTarget.kcal * 0.6) return { title: 'Eat — you are behind', why: `${Math.round(DB.nutTarget.kcal - nutTotals(d).kcal)} kcal to go. On a bulk, under-eating undoes the training.`, color: 'var(--fit)' };
   if (s.music < 40) return { title: 'Sit down at the kit', why: 'Music score is slipping — 20 minutes is enough to keep the streak.', color: 'var(--music)' };
   if (!DB.journal.some(j => j.date === d)) return { title: 'Write today down', why: 'One win, one lesson. Two minutes.', color: 'var(--growth)' };
   return { title: 'Plan tomorrow', why: "Today's handled. Set up tomorrow so you wake up already moving.", color: 'var(--growth)' };
@@ -1315,95 +1324,150 @@ function dayPeek(k) {
 
 /* ═══════════════════════════════════════════════════════════════════
    FITNESS — train · body · fuel · progress
+   Built for: 122.4 lb, 5'5", lean bulk, ULPPL rotating split, 6x/week
    ═══════════════════════════════════════════════════════════════════ */
 const e1rm = (w, r) => (Number(w) || 0) * (1 + (Number(r) || 0) / 30);   // Epley
 const volOf = wo => sum((wo.ex || []).flatMap(e => (e.sets || []).map(s => (Number(s.w) || 0) * (Number(s.r) || 0))));
+
+/* ── nutrition helpers ────────────────────────────────────────── */
+const MEALS = [['breakfast', 'Breakfast', '🌅'], ['lunch', 'Lunch', '☀️'],
+               ['dinner', 'Dinner', '🌙'], ['snack', 'Snacks', '🍎']];
+function nutDay(d = today()) {
+  const n = DB.nutrition[d];
+  if (!n) return { entries: [], water: 0, milk: 0 };
+  /* migrate old shape {kcal,p,c,f,water} -> entries[] */
+  if (!n.entries) {
+    n.entries = (n.kcal || n.p || n.c || n.f)
+      ? [{ id: uid(), name: 'Logged earlier', kcal: n.kcal || 0, p: n.p || 0, c: n.c || 0, f: n.f || 0, meal: 'snack', qty: 1 }]
+      : [];
+    delete n.kcal; delete n.p; delete n.c; delete n.f;
+  }
+  n.water = n.water || 0; n.milk = n.milk || 0;
+  return n;
+}
+function nutTotals(d = today()) {
+  const n = nutDay(d);
+  const t = { kcal: 0, p: 0, c: 0, f: 0 };
+  (n.entries || []).forEach(e => { t.kcal += e.kcal || 0; t.p += e.p || 0; t.c += e.c || 0; t.f += e.f || 0; });
+  /* the daily milk is part of the plan, so it counts automatically */
+  if (n.milk) {
+    const m = MILK[DB.profile.milk || 'whole'];
+    t.kcal += m.kcal * n.milk; t.p += m.p * n.milk; t.c += m.c * n.milk; t.f += m.f * n.milk;
+  }
+  return { kcal: round(t.kcal), p: round(t.p, 1), c: round(t.c, 1), f: round(t.f, 1) };
+}
+/* per CUP (236.6 ml) */
+const MILK = {
+  whole:  { kcal: 149, p: 7.7, c: 11.7, f: 8.0, label: 'Whole milk' },
+  twop:   { kcal: 122, p: 8.1, c: 11.7, f: 4.8, label: '2% milk' },
+  skim:   { kcal: 83,  p: 8.3, c: 12.2, f: 0.2, label: 'Skim milk' },
+};
 
 RENDERERS.fitness = function () {
   const sub = DB.ui.sub.fitness || 'train';
   const s = scores();
   const head = pageHead('Body', `Life score contribution · ${s.fit}/100`,
-    `<div style="--_c:var(--fit)">${ring(s.fit, { size: 52, sw: 5, color: 'var(--fit)', val: s.fit, vs: 15 })}</div>`);
+    ring(s.fit, { size: 52, sw: 5, color: 'var(--fit)', val: s.fit, vs: 15 }));
   const nav = segNav('fitness', [['train', 'Train'], ['body', 'Body'], ['fuel', 'Fuel'], ['prog', 'Progress']], sub);
   return head + nav + ({ train: fitTrain, body: fitBody, fuel: fitFuel, prog: fitProg }[sub] || fitTrain)();
 };
 
-/* ── TRAIN ────────────────────────────────────────────────────── */
+/* ═══ TRAIN ═══════════════════════════════════════════════════════ */
+/* ULPPL is a ROTATING cycle — it drifts across weekdays, so what matters
+   is "what's next in the cycle", not "what day is it". */
+function nextSession() {
+  const cycle = DB.split.cycle;
+  const logged = [...DB.workouts].filter(w => w.cyc != null).sort((a, b) => b.date.localeCompare(a.date));
+  if (!logged.length) return { idx: 0, name: cycle[0] };
+  const lastIdx = logged[0].cyc;
+  let idx = (lastIdx + 1) % cycle.length;
+  /* skip rest days in the "what's next" prompt */
+  if (/rest/i.test(cycle[idx])) idx = (idx + 1) % cycle.length;
+  return { idx, name: cycle[idx] };
+}
 function fitTrain() {
   const d = today(), wk = weekDates();
   const wkWorkouts = DB.workouts.filter(w => wk.includes(w.date));
   const trained = new Set(wkWorkouts.map(w => w.date)).size;
+  const target = DB.split.target;
   const wkVol = sum(wkWorkouts.map(volOf));
   const prevWk = weekDates(addDays(d, -7));
   const prevVol = sum(DB.workouts.filter(w => prevWk.includes(w.date)).map(volOf));
   const volDelta = prevVol ? round((wkVol - prevVol) / prevVol * 100) : 0;
   const todayDone = DB.workouts.some(w => w.date === d);
-
+  const next = nextSession();
   const recent = [...DB.workouts].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 8);
 
   return `
-  <div class="card accent mb" style="--_c:var(--fit)">
+  <div class="focus mb" style="--_c:var(--fit)">
+    <div class="focus-l">${todayDone ? 'Logged today' : 'Next in the cycle'}</div>
+    <div class="focus-t">${esc(todayDone ? (recent[0]?.name || 'Session done') : next.name)}</div>
+    <div class="focus-s">${esc(DB.split.name)} rotation · ${DB.split.cycle.map((c, i) =>
+      i === next.idx && !todayDone ? '▸' + c : c).join(' · ')}</div>
+    <div class="focus-a">
+      <button class="btn btn-primary" onclick="logWorkout()">${todayDone ? '+ Another session' : 'Log ' + esc(next.name)}</button>
+    </div>
+  </div>
+
+  <div class="card mb" style="--_c:var(--fit)">
     <div class="row" style="gap:16px;align-items:center">
-      ${ring(pct(trained, 4), { size: 74, sw: 7, color: 'var(--fit)', val: trained + '/4', vs: 17, label: 'week' })}
+      ${ring(pct(trained, target), { size: 74, sw: 7, color: 'var(--fit)', val: trained + '/' + target, vs: 16, label: 'week' })}
       <div class="grow">
         <div class="eyebrow">Weekly volume</div>
-        <div class="big sm">${kmoney(wkVol).replace(DB.profile.currency, '')}<small> ${DB.profile.unit}</small></div>
+        <div class="big sm">${round(wkVol).toLocaleString()}<small> ${DB.profile.unit}</small></div>
         <div class="row mt-sm" style="gap:6px">
           <span class="delta ${volDelta > 0 ? 'up' : volDelta < 0 ? 'dn' : 'flat'}">${volDelta > 0 ? '+' : ''}${volDelta}%</span>
           <span class="fs11 muted">vs last week</span>
         </div>
       </div>
     </div>
-    <button class="btn btn-accent btn-block mt" style="--_c:var(--fit)" onclick="logWorkout()">
-      ${todayDone ? '+ Log another session' : '+ Log today\'s workout'}</button>
   </div>
 
-  <div class="sect">${sectionHead('Last 8 weeks')}
-    <div class="card">${barChart(last8Weeks(), { color: 'var(--fit)', target: 4, h: 110 })}
-      <div class="li-s tc mt-sm">Sessions per week · dashed line = 4/wk target</div></div>
+  <div class="sect">${sectionHead('Sessions per week · last 8')}
+    <div class="card">${barChart(last8Weeks(), { color: 'var(--fit)', target, h: 110 })}
+      <div class="li-s tc mt-sm" style="white-space:normal">Dashed line = your ${target}/week target</div></div>
   </div>
 
   <div class="sect">${sectionHead('Personal records', ['+ PR', 'addPR()'])}
-    <div class="card">${DB.prs.length ? [...DB.prs].sort((a, b) => e1rm(b.w, b.r) - e1rm(a.w, a.r)).slice(0, 6).map(p => `
+    <div class="card">${DB.prs.length ? [...DB.prs].sort((a, b) => e1rm(b.w, b.r) - e1rm(a.w, a.r)).slice(0, 8).map(p => `
       <div class="li"><span style="font-size:15px">🏆</span>
         <div class="li-main"><div class="li-t">${esc(p.ex)}</div>
         <div class="li-s">${fmtD(p.date)} · est. 1RM ${round(e1rm(p.w, p.r))} ${DB.profile.unit}</div></div>
         <div class="num" style="font-weight:700;font-size:15px">${p.w}<span class="muted fs11">×${p.r}</span></div>
         <button class="x" onclick="delPR('${p.id}')">✕</button></div>`).join('')
-      : `<div class="empty">No PRs logged.<br>Every heavy single deserves a receipt.</div>`}</div>
+      : `<div class="empty">No PRs yet. Log sets inside a session and they're detected automatically.</div>`}</div>
   </div>
 
   <div class="sect">${sectionHead('Recent sessions')}
     <div class="card">${recent.length ? recent.map(w => `
       <div class="li"><div class="li-main">
         <div class="li-t">${esc(w.name || 'Workout')}</div>
-        <div class="li-s">${fmtDW(w.date)} · ${(w.ex || []).length} exercises · ${round(volOf(w)).toLocaleString()} ${DB.profile.unit} vol</div>
+        <div class="li-s">${fmtDW(w.date)} · ${(w.ex || []).length} exercises · ${round(volOf(w)).toLocaleString()} ${DB.profile.unit}</div>
       </div>
-      <button class="btn btn-sm btn-ghost" onclick="viewWorkout('${w.id}')">View</button>
+      <button class="btn btn-sm btn-ghost" onclick="editExercises('${w.id}')">Open</button>
       <button class="x" onclick="delWorkout('${w.id}')">✕</button></div>`).join('')
       : `<div class="empty">No sessions logged yet.</div>`}</div>
   </div>`;
 }
-
 function last8Weeks() {
   const out = [];
   for (let i = 7; i >= 0; i--) {
-    const end = addDays(today(), -i * 7), wk = weekDates(end);
-    const n = new Set(DB.workouts.filter(w => wk.includes(w.date)).map(w => w.date)).size;
-    out.push({ label: i === 0 ? 'now' : '-' + i, val: n });
+    const wk = weekDates(addDays(today(), -i * 7));
+    out.push({ label: i === 0 ? 'now' : '-' + i, val: new Set(DB.workouts.filter(w => wk.includes(w.date)).map(w => w.date)).size });
   }
   return out;
 }
-
 function logWorkout() {
+  const next = nextSession();
   formSheet('Log workout', [
-    { k: 'name', l: 'Session', ph: 'Push · Pull · Legs · Upper…' },
+    { k: 'name', l: 'Session', v: next.name, ph: 'Upper · Lower · Push · Pull · Legs' },
     { k: 'date', l: 'Date', type: 'date', v: today() },
     { k: 'dur', l: 'Minutes', type: 'number', v: 60 },
-    { k: 'notes', l: 'Notes', type: 'textarea', ph: 'How did it feel? What moved up?' },
+    { k: 'notes', l: 'Notes', type: 'textarea', ph: 'What moved up?' },
   ], o => {
-    if (!o.name) o.name = 'Workout';
-    const w = { id: uid(), date: o.date || today(), name: o.name, dur: o.dur || 0, notes: o.notes || '', ex: [] };
+    const cyc = DB.split.cycle.findIndex(c => c.toLowerCase() === (o.name || '').toLowerCase().trim());
+    const w = { id: uid(), date: o.date || today(), name: o.name || 'Workout', dur: o.dur || 0,
+                notes: o.notes || '', ex: [], cyc: cyc >= 0 ? cyc : next.idx };
     DB.workouts.push(w); logScore(); save();
     toast('Session logged'); setTimeout(() => editExercises(w.id), 320);
   });
@@ -1417,10 +1481,9 @@ function editExercises(id) {
     || `<div class="empty">No exercises yet.</div>`;
   sheet(w.name + ' · ' + fmtD(w.date), `
     <div class="card mb">${rows}</div>
-    <div class="field"><label class="field-l">Add exercise</label>
-      <input id="exName" placeholder="Bench press"></div>
+    <div class="field"><label class="field-l">Exercise</label><input id="exName" placeholder="Bench press"></div>
     <div class="field"><label class="field-l">Sets — weight×reps, comma separated</label>
-      <input id="exSets" placeholder="135x8, 155x6, 175x4" inputmode="text"></div>
+      <input id="exSets" placeholder="95x8, 105x6, 115x4"></div>
     <button class="btn btn-primary btn-block" id="exAdd">Add exercise</button>
     <button class="btn btn-block mt" onclick="closeSheet()">Done</button>`, () => {
     $('exAdd').onclick = () => {
@@ -1430,7 +1493,6 @@ function editExercises(id) {
         return m ? { w: Number(m[1]), r: Number(m[2]) } : null;
       }).filter(Boolean);
       w.ex.push({ name: n, sets });
-      /* auto-detect PRs */
       sets.forEach(s => {
         const best = DB.prs.filter(p => p.ex.toLowerCase() === n.toLowerCase())
           .reduce((m, p) => Math.max(m, e1rm(p.w, p.r)), 0);
@@ -1445,57 +1507,79 @@ function editExercises(id) {
   });
 }
 function delEx(id, i) { const w = DB.workouts.find(x => x.id === id); if (w) { w.ex.splice(i, 1); save(false); editExercises(id); } }
-function viewWorkout(id) { editExercises(id); }
 function delWorkout(id) { askConfirm('Delete this session?', () => { DB.workouts = DB.workouts.filter(w => w.id !== id); save(); }); }
 function addPR() {
   formSheet('New PR', [
-    { k: 'ex', l: 'Exercise', ph: 'Bench press' },
-    { k: 'w', l: 'Weight (' + DB.profile.unit + ')', type: 'number', step: 'any' },
-    { k: 'r', l: 'Reps', type: 'number', v: 1 },
-    { k: 'date', l: 'Date', type: 'date', v: today() },
+    { k: 'ex', l: 'Exercise' }, { k: 'w', l: 'Weight (' + DB.profile.unit + ')', type: 'number', step: 'any' },
+    { k: 'r', l: 'Reps', type: 'number', v: 1 }, { k: 'date', l: 'Date', type: 'date', v: today() },
   ], o => { if (!o.ex || !o.w) return; DB.prs.push({ id: uid(), ...o }); save(); toast('🏆 PR logged'); });
 }
 function delPR(id) { DB.prs = DB.prs.filter(p => p.id !== id); save(); }
 
-/* ── BODY ─────────────────────────────────────────────────────── */
+/* ═══ BODY — lean bulk ════════════════════════════════════════════ */
 function fitBody() {
   const ws = [...DB.weights].sort((a, b) => a.date.localeCompare(b.date));
   const cur = ws.length ? ws[ws.length - 1] : null;
-  const wk = ws.filter(w => daysBetween(w.date, today()) <= 7);
-  const prev = ws.filter(w => { const n = daysBetween(w.date, today()); return n > 7 && n <= 14; });
-  const avgNow = wk.length ? avg(wk.map(w => w.w)) : null;
-  const avgPrev = prev.length ? avg(prev.map(w => w.w)) : null;
-  const delta = (avgNow != null && avgPrev != null) ? avgNow - avgPrev : null;
-  const goal = DB.goals.find(g => g.dom === 'fit' && !g.done && (g.unit === 'lb' || g.unit === 'kg'));
+  const B = DB.bulk;
+  /* rate of gain over the trailing 28 days, in lb/week */
+  const recent = ws.filter(w => daysBetween(w.date, today()) <= 28);
+  let rate = null;
+  if (recent.length >= 2) {
+    const days = daysBetween(recent[0].date, recent[recent.length - 1].date);
+    if (days >= 7) rate = (recent[recent.length - 1].w - recent[0].w) / days * 7;
+  }
+  const verdict = rateVerdict(rate);
+  const toGoal = cur && B.goalWeight ? B.goalWeight - cur.w : null;
+  const weeksOut = (toGoal != null && rate > 0) ? Math.ceil(toGoal / rate) : null;
 
   return `
-  <div class="card accent mb" style="--_c:var(--fit)">
+  <div class="card accent mb" style="--_c:${verdict.color}">
     <div class="eyebrow">Current weight</div>
     <div class="row" style="align-items:baseline;gap:10px;margin-top:6px">
       <div class="big">${cur ? round(cur.w, 1) : '—'}<small> ${DB.profile.unit}</small></div>
-      ${delta != null ? `<span class="delta ${delta > 0 ? 'up' : delta < 0 ? 'dn' : 'flat'}">${delta > 0 ? '+' : ''}${round(delta, 1)}</span>` : ''}
+      ${rate != null ? `<span class="delta ${rate > 0 ? 'up' : rate < 0 ? 'dn' : 'flat'}">${rate > 0 ? '+' : ''}${round(rate, 2)}/wk</span>` : ''}
     </div>
-    <div class="li-s">${cur ? 'Last weigh-in ' + fmtDW(cur.date) : 'No weigh-ins yet'}${avgNow != null ? ' · 7-day avg ' + round(avgNow, 1) : ''}</div>
-    ${goal ? `<div class="mt"><div class="bar" style="--_c:var(--fit)"><span style="width:${pct(cur ? cur.w : 0, goal.target)}%"></span></div>
-      <div class="li-s" style="margin-top:6px">Goal: ${esc(goal.title)} · ${goal.target}${goal.unit}</div></div>` : ''}
+    <div class="li-s">${cur ? 'Last weigh-in ' + fmtDW(cur.date) : 'No weigh-ins yet'}</div>
+    ${B.goalWeight ? `
+      <div class="bar mt" style="--_c:var(--fit)"><span style="width:${pct(cur ? cur.w : 0, B.goalWeight)}%"></span></div>
+      <div class="li-s" style="margin-top:6px;white-space:normal">Goal ${B.goalWeight} ${DB.profile.unit}${toGoal > 0 ? ` · ${round(toGoal, 1)} to go` : ' · reached 🎉'}${weeksOut ? ` · ~${weeksOut} weeks at this rate` : ''}</div>` : ''}
     <button class="btn btn-accent btn-block mt" style="--_c:var(--fit)" onclick="addWeight()">+ Log weigh-in</button>
   </div>
 
-  <div class="sect">${sectionHead('Trend · last 90 days')}
+  <div class="card mb" style="--_c:${verdict.color}">
+    <div class="eyebrow">Bulk pace</div>
+    <div class="focus-t" style="font-size:17px;margin:6px 0 5px;color:${verdict.color}">${esc(verdict.title)}</div>
+    <div class="sub">${esc(verdict.msg)}</div>
+    <div class="li-s" style="margin-top:9px;white-space:normal">Target band ${B.rateMin}–${B.rateMax} ${DB.profile.unit}/week — fast enough to build, slow enough to stay lean</div>
+  </div>
+
+  <div class="sect">${sectionHead('Trend · 90 days')}
     <div class="card">${lineChart(ws.filter(w => daysBetween(w.date, today()) <= 90).map(w => ({ date: w.date, val: w.w })),
       { color: 'var(--fit)', h: 140, fmt: v => round(v, 1) })}</div>
   </div>
 
   <div class="sect">${sectionHead('Weigh-in log')}
-    <div class="card">${ws.length ? [...ws].reverse().slice(0, 12).map((w, i, arr) => {
-      const nxt = arr[i + 1];
-      const dl = nxt ? w.w - nxt.w : null;
+    <div class="card">${ws.length ? [...ws].reverse().slice(0, 14).map((w, i, arr) => {
+      const nxt = arr[i + 1], dl = nxt ? w.w - nxt.w : null;
       return `<div class="li"><div class="li-main"><div class="li-t num">${round(w.w, 1)} ${DB.profile.unit}</div>
         <div class="li-s">${fmtDW(w.date)}</div></div>
         ${dl != null ? `<span class="delta ${dl > 0 ? 'up' : dl < 0 ? 'dn' : 'flat'}">${dl > 0 ? '+' : ''}${round(dl, 1)}</span>` : ''}
         <button class="x" onclick="delWeight('${w.date}')">✕</button></div>`;
-    }).join('') : `<div class="empty">Weigh in same time, same conditions — the trend is the signal, not the number.</div>`}</div>
+    }).join('') : `<div class="empty">Weigh in first thing, after the bathroom, before food.<br>Same conditions every time — the trend is the signal.</div>`}</div>
   </div>`;
+}
+function rateVerdict(rate) {
+  const B = DB.bulk;
+  if (rate == null) return { title: 'Not enough data yet', color: 'var(--text-3)',
+    msg: 'Log weigh-ins for two weeks and this will tell you whether you are gaining muscle or just gaining.' };
+  if (rate < 0) return { title: 'You are losing weight', color: 'var(--danger)',
+    msg: `You are trying to bulk but trending down ${round(Math.abs(rate), 2)} ${DB.profile.unit}/week. Eat more — add 200-300 kcal a day and check again in a week.` };
+  if (rate < B.rateMin) return { title: 'Gaining, but slowly', color: 'var(--warning)',
+    msg: `At ${round(rate, 2)} ${DB.profile.unit}/week you are below the band. Nudge calories up by ~200/day.` };
+  if (rate <= B.rateMax) return { title: 'Right in the pocket', color: 'var(--fit)',
+    msg: `${round(rate, 2)} ${DB.profile.unit}/week is exactly where a lean bulk should sit. Do not change anything.` };
+  return { title: 'Gaining too fast', color: 'var(--warning)',
+    msg: `${round(rate, 2)} ${DB.profile.unit}/week is above the band — past roughly ${B.rateMax}/week the extra is mostly fat. Pull back ~250 kcal a day.` };
 }
 function addWeight() {
   const last = DB.weights.length ? DB.weights[DB.weights.length - 1].w : '';
@@ -1512,95 +1596,332 @@ function addWeight() {
 }
 function delWeight(date) { DB.weights = DB.weights.filter(w => w.date !== date); save(); }
 
-/* ── FUEL ─────────────────────────────────────────────────────── */
+/* ═══ FUEL — full food logger ═════════════════════════════════════ */
 function fitFuel() {
-  const d = today(), n = DB.nutrition[d] || { kcal: 0, p: 0, c: 0, f: 0, water: 0 };
-  const t = DB.nutTarget;
-  const macro = (lbl, val, tgt, unit, color) => `
-    <div style="margin-bottom:13px">
-      <div class="row" style="justify-content:space-between;margin-bottom:6px">
-        <div class="fs12" style="font-weight:600">${lbl}</div>
-        <div class="num fs12 muted">${round(val, 1)}${unit} / ${tgt}${unit}</div>
+  const d = today(), n = nutDay(d), t = nutTotals(d), T = DB.nutTarget;
+  const left = T.kcal - t.kcal;
+  const macro = (lbl, val, tgt, color) => {
+    const over = val > tgt * 1.05;
+    return `<div style="flex:1;min-width:0">
+      <div class="row" style="justify-content:space-between;margin-bottom:5px">
+        <div class="fs11" style="font-weight:650">${lbl}</div>
+        <div class="num fs11 ${over ? '' : 'muted'}" style="${over ? 'color:var(--warning)' : ''}">${round(val)}/${tgt}g</div>
       </div>
-      <div class="bar" style="--_c:${color}"><span style="width:${pct(val, tgt)}%"></span></div>
+      <div class="bar thin" style="--_c:${color}"><span style="width:${pct(val, tgt)}%"></span></div>
     </div>`;
+  };
+
+  const byMeal = MEALS.map(([id, lbl, icon]) => {
+    const items = (n.entries || []).filter(e => e.meal === id);
+    const kc = sum(items.map(e => e.kcal));
+    return `<div class="card mb pad-sm">
+      <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:${items.length ? '8px' : '0'}">
+        <div class="row" style="gap:8px"><span style="font-size:15px">${icon}</span>
+          <div><div class="card-t" style="font-size:13.5px">${lbl}</div>
+          ${kc ? `<div class="li-s">${round(kc)} kcal</div>` : ''}</div></div>
+        <button class="btn btn-sm" onclick="addFood('${id}')">+ Add</button>
+      </div>
+      ${items.map(e => `<div class="li" style="padding:9px 2px">
+        <div class="li-main"><div class="li-t" style="font-size:13px">${esc(e.name)}${e.brand ? ` <span class="muted fs11">${esc(e.brand)}</span>` : ''}</div>
+          <div class="li-s">${e.qty ? esc(String(e.qty)) + (e.unit || '') + ' · ' : ''}${round(e.kcal)} kcal · ${round(e.p)}P ${round(e.c)}C ${round(e.f)}F</div></div>
+        <button class="x" onclick="delFoodEntry('${e.id}')">✕</button></div>`).join('')}
+    </div>`;
+  }).join('');
 
   const wk = weekDates();
-  const proteinBars = wk.map(k => ({ label: DOW[new Date(k + 'T12:00:00').getDay()][0], val: (DB.nutrition[k] || {}).p || 0 }));
-  const waterBars = wk.map(k => ({ label: DOW[new Date(k + 'T12:00:00').getDay()][0], val: (DB.nutrition[k] || {}).water || 0 }));
-
   return `
-  <div class="card accent mb" style="--_c:var(--fit)">
-    <div class="row" style="gap:16px;align-items:center;margin-bottom:16px">
-      ${ring(pct(n.kcal, t.kcal), { size: 82, sw: 8, color: 'var(--fit)', val: Math.round(n.kcal), vs: 19, label: 'kcal' })}
+  <div class="card accent mb" style="--_c:${left < -200 ? 'var(--warning)' : 'var(--fit)'}">
+    <div class="row" style="gap:16px;align-items:center;margin-bottom:15px">
+      ${ring(pct(t.kcal, T.kcal), { size: 88, sw: 8, color: 'var(--fit)', val: round(t.kcal), vs: 20, label: 'kcal' })}
       <div class="grow">
-        <div class="eyebrow">Remaining</div>
-        <div class="big sm">${Math.max(0, Math.round(t.kcal - n.kcal))}<small> kcal</small></div>
-        <div class="li-s">${n.kcal > t.kcal ? Math.round(n.kcal - t.kcal) + ' over target' : 'of ' + t.kcal + ' target'}</div>
+        <div class="eyebrow">${left >= 0 ? 'Still to eat' : 'Over target'}</div>
+        <div class="big sm">${Math.abs(round(left))}<small> kcal</small></div>
+        <div class="li-s">of ${T.kcal} · lean bulk surplus</div>
       </div>
     </div>
-    ${macro('Protein', n.p, t.p, 'g', 'var(--fit)')}
-    ${macro('Carbs', n.c, t.c, 'g', 'var(--biz)')}
-    ${macro('Fat', n.f, t.f, 'g', 'var(--growth)')}
+    <div class="row" style="gap:12px">
+      ${macro('Protein', t.p, T.p, 'var(--fit)')}
+      ${macro('Carbs', t.c, T.c, 'var(--biz)')}
+      ${macro('Fat', t.f, T.f, 'var(--growth)')}
+    </div>
     <div class="row mt" style="gap:8px">
-      <button class="btn btn-accent grow" style="--_c:var(--fit)" onclick="addMeal()">+ Log food</button>
+      <button class="btn btn-accent grow" style="--_c:var(--fit)" onclick="addFood()">+ Log food</button>
       <button class="btn btn-icon" onclick="nutTargets()">⚙</button>
     </div>
   </div>
 
-  <div class="card mb" style="--_c:var(--money)">
-    <div class="card-h"><div class="card-t">💧 Water</div>
-      <div class="num fs13 muted">${n.water || 0} / ${t.water}</div></div>
-    <div class="bar mb" style="--_c:var(--money)"><span style="width:${pct(n.water, t.water)}%"></span></div>
-    <div class="row" style="gap:8px">
-      <button class="btn grow" onclick="water(1)">+1 glass</button>
-      <button class="btn grow" onclick="water(-1)">−1</button>
+  <div class="grid g2 mb">
+    <div class="card pad-sm" style="--_c:var(--money)">
+      <div class="row" style="justify-content:space-between"><div class="eyebrow">💧 Water</div>
+        <div class="num fs11 muted">${n.water}/${T.water}</div></div>
+      <div class="big sm" style="margin:8px 0 9px">${round(n.water / 16, 2)}<small> gal</small></div>
+      <div class="bar thin mb" style="--_c:var(--money)"><span style="width:${pct(n.water, T.water)}%"></span></div>
+      <div class="row" style="gap:6px">
+        <button class="btn btn-sm grow" onclick="drink('water',1)">+1 cup</button>
+        <button class="btn btn-sm" onclick="drink('water',-1)">−</button></div>
+    </div>
+    <div class="card pad-sm" style="--_c:var(--growth)">
+      <div class="row" style="justify-content:space-between"><div class="eyebrow">🥛 Milk</div>
+        <div class="num fs11 muted">${round(n.milk, 1)}/${T.milk}</div></div>
+      <div class="big sm" style="margin:8px 0 9px">${round(n.milk / 16, 2)}<small> gal</small></div>
+      <div class="bar thin mb" style="--_c:var(--growth)"><span style="width:${pct(n.milk, T.milk)}%"></span></div>
+      <div class="row" style="gap:6px">
+        <button class="btn btn-sm grow" onclick="drink('milk',1)">+1 cup</button>
+        <button class="btn btn-sm" onclick="drink('milk',-1)">−</button></div>
     </div>
   </div>
+  <div class="li-s tc mb" style="margin-top:-4px;white-space:normal">Milk macros are counted above automatically
+    (${MILK[DB.profile.milk || 'whole'].label} · ${MILK[DB.profile.milk || 'whole'].kcal} kcal/cup)</div>
+
+  ${byMeal}
 
   <div class="sect">${sectionHead('Protein · this week')}
-    <div class="card">${barChart(proteinBars, { color: 'var(--fit)', target: t.p, h: 108 })}
-      <div class="li-s tc">Consistency beats perfection — hit ${t.p}g most days</div></div>
+    <div class="card">${barChart(wk.map(k => ({
+      label: DOW[new Date(k + 'T12:00:00').getDay()][0], val: nutTotals(k).p
+    })), { color: 'var(--fit)', target: T.p, h: 108 })}</div>
   </div>
 
-  <div class="sect">${sectionHead('Water · this week')}
-    <div class="card">${barChart(waterBars, { color: 'var(--money)', target: t.water, h: 96 })}</div>
+  <div class="sect">${sectionHead('Calories · this week')}
+    <div class="card">${barChart(wk.map(k => ({
+      label: DOW[new Date(k + 'T12:00:00').getDay()][0], val: nutTotals(k).kcal
+    })), { color: 'var(--biz)', target: T.kcal, h: 108 })}
+      <div class="li-s tc" style="white-space:normal">Bulking is won on the days you don't feel like eating</div></div>
   </div>`;
 }
-function addMeal() {
-  formSheet('Log food', [
-    { k: 'kcal', l: 'Calories', type: 'number' },
-    { k: 'p', l: 'Protein (g)', type: 'number', step: 'any' },
-    { k: 'c', l: 'Carbs (g)', type: 'number', step: 'any' },
-    { k: 'f', l: 'Fat (g)', type: 'number', step: 'any' },
-  ], o => {
-    const d = today(), n = DB.nutrition[d] || { kcal: 0, p: 0, c: 0, f: 0, water: 0 };
-    n.kcal = round((n.kcal || 0) + (o.kcal || 0));
-    n.p = round((n.p || 0) + (o.p || 0), 1);
-    n.c = round((n.c || 0) + (o.c || 0), 1);
-    n.f = round((n.f || 0) + (o.f || 0), 1);
-    DB.nutrition[d] = n; logScore(); save(); toast('Logged');
-  });
-}
-function water(n) {
-  const d = today(), x = DB.nutrition[d] || { kcal: 0, p: 0, c: 0, f: 0, water: 0 };
-  x.water = Math.max(0, (x.water || 0) + n);
+
+function drink(kind, n) {
+  const d = today(), x = nutDay(d);
+  x[kind] = Math.max(0, round((x[kind] || 0) + n, 1));
   DB.nutrition[d] = x; haptic();
-  if (x.water === DB.nutTarget.water) toast('💧 Water target hit');
+  if (kind === 'water' && x.water === DB.nutTarget.water) toast('💧 Gallon done');
+  if (kind === 'milk' && x.milk >= DB.nutTarget.milk) toast('🥛 Milk target hit');
   logScore(); save();
 }
-function nutTargets() {
-  const t = DB.nutTarget;
-  formSheet('Daily targets', [
-    { k: 'kcal', l: 'Calories', type: 'number', v: t.kcal },
-    { k: 'p', l: 'Protein (g)', type: 'number', v: t.p },
-    { k: 'c', l: 'Carbs (g)', type: 'number', v: t.c },
-    { k: 'f', l: 'Fat (g)', type: 'number', v: t.f },
-    { k: 'water', l: 'Water (glasses)', type: 'number', v: t.water },
-  ], o => { DB.nutTarget = { kcal: o.kcal || 2400, p: o.p || 180, c: o.c || 250, f: o.f || 75, water: o.water || 12 }; save(); });
+
+/* ── the food picker: My Foods · Search · Barcode · Quick ─────── */
+let _foodMeal = 'snack', _foodTab = 'mine';
+function addFood(meal) {
+  _foodMeal = meal || guessMeal();
+  renderFoodSheet();
+}
+function guessMeal() {
+  const h = new Date().getHours();
+  return h < 11 ? 'breakfast' : h < 15 ? 'lunch' : h < 21 ? 'dinner' : 'snack';
+}
+function setFoodTab(t) { _foodTab = t; renderFoodSheet(); }
+function renderFoodSheet(searchResults, searchTerm) {
+  const tabs = [['mine', 'My foods'], ['search', 'Search'], ['quick', 'Quick add']];
+  let body = '';
+
+  if (_foodTab === 'mine') {
+    const favs = [...DB.foods].sort((a, b) => (b.uses || 0) - (a.uses || 0));
+    body = favs.length ? `<div class="card">${favs.map(f => `
+      <div class="li" onclick="pickFood('${f.id}')" style="cursor:pointer">
+        <div class="li-main"><div class="li-t">${esc(f.name)}${f.brand ? ` <span class="muted fs11">${esc(f.brand)}</span>` : ''}</div>
+          <div class="li-s">${f.per}${f.unit} · ${round(f.kcal)} kcal · ${round(f.p)}P ${round(f.c)}C ${round(f.f)}F</div></div>
+        <button class="x" onclick="event.stopPropagation();delSavedFood('${f.id}')">✕</button></div>`).join('')}</div>`
+      : `<div class="empty">No saved foods yet.<br>Anything you log from Search or Quick add gets saved here for one-tap reuse.</div>`;
+  }
+
+  if (_foodTab === 'search') {
+    body = `<div class="row mb" style="gap:8px">
+        <input id="foodQ" class="grow" placeholder="Search foods…" value="${esc(searchTerm || '')}">
+        <button class="btn btn-icon" onclick="scanBarcode()" title="Scan barcode">⌗</button>
+      </div>
+      <div id="foodResults">${searchResults == null ? `<div class="empty">Search Open Food Facts, or tap ⌗ to scan a barcode.</div>` : searchResults}</div>`;
+  }
+
+  if (_foodTab === 'quick') {
+    body = `
+      <div class="field"><label class="field-l">Name</label><input id="qName" placeholder="Chicken and rice"></div>
+      <div class="row mb" style="gap:8px">
+        <div class="grow"><label class="field-l">Calories</label><input id="qKcal" type="number" inputmode="decimal"></div>
+        <div class="grow"><label class="field-l">Protein</label><input id="qP" type="number" inputmode="decimal"></div>
+      </div>
+      <div class="row mb" style="gap:8px">
+        <div class="grow"><label class="field-l">Carbs</label><input id="qC" type="number" inputmode="decimal"></div>
+        <div class="grow"><label class="field-l">Fat</label><input id="qF" type="number" inputmode="decimal"></div>
+      </div>
+      <button class="btn btn-primary btn-block" onclick="quickAdd()">Log it</button>`;
+  }
+
+  sheet('Add food', `
+    <div class="seg mb">${MEALS.map(([id, lbl]) =>
+      `<button class="seg-btn ${_foodMeal === id ? 'active' : ''}" onclick="_foodMeal='${id}';renderFoodSheet()">${lbl}</button>`).join('')}</div>
+    <div class="seg mb">${tabs.map(([id, lbl]) =>
+      `<button class="seg-btn ${_foodTab === id ? 'active' : ''}" onclick="setFoodTab('${id}')">${lbl}</button>`).join('')}</div>
+    ${body}
+    <button class="btn btn-block mt" onclick="closeSheet()">Done</button>`, () => {
+    const q = $('foodQ');
+    if (q) {
+      q.oninput = debounce(() => searchFood(q.value.trim()), 450);
+      if (!searchResults) setTimeout(() => q.focus(), 250);
+    }
+  });
+}
+function debounce(fn, ms) { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; }
+
+async function searchFood(q) {
+  if (!q || q.length < 2) return;
+  const box = $('foodResults'); if (box) box.innerHTML = `<div class="empty">Searching…</div>`;
+  try {
+    const r = await fetch('https://world.openfoodfacts.org/cgi/search.pl?search_terms=' +
+      encodeURIComponent(q) + '&json=1&page_size=20&fields=product_name,brands,nutriments,serving_size&nocache=1');
+    const data = await r.json();
+    const items = (data.products || []).map(p => {
+      const nm = p.nutriments || {};
+      const kcal = Math.round(nm['energy-kcal_100g'] || nm['energy-kcal'] || 0);
+      if (!p.product_name || !kcal) return null;
+      return { name: p.product_name, brand: (p.brands || '').split(',')[0].trim(),
+        per: 100, unit: 'g', kcal, p: +(nm.proteins_100g || 0), c: +(nm.carbohydrates_100g || 0), f: +(nm.fat_100g || 0) };
+    }).filter(Boolean).slice(0, 15);
+    showResults(items, q);
+  } catch (e) {
+    const box2 = $('foodResults');
+    if (box2) box2.innerHTML = `<div class="empty">Search needs a connection.<br>Use Quick add to log it by hand.</div>`;
+  }
+}
+function showResults(items, q) {
+  window._foodTmp = items;
+  const html = items.length ? `<div class="card">${items.map((f, i) => `
+    <div class="li" onclick="pickTmp(${i})" style="cursor:pointer">
+      <div class="li-main"><div class="li-t">${esc(f.name)}${f.brand ? ` <span class="muted fs11">${esc(f.brand)}</span>` : ''}</div>
+        <div class="li-s">per 100g · ${f.kcal} kcal · ${round(f.p)}P ${round(f.c)}C ${round(f.f)}F</div></div></div>`).join('')}</div>`
+    : `<div class="empty">Nothing found for "${esc(q)}".<br>Try Quick add instead.</div>`;
+  const box = $('foodResults');
+  if (box) box.innerHTML = html; else renderFoodSheet(html, q);
+}
+function pickTmp(i) { const f = (window._foodTmp || [])[i]; if (f) qtySheet(f, true); }
+function pickFood(id) { const f = DB.foods.find(x => x.id === id); if (f) qtySheet(f, false); }
+
+/* how much of it? — macros scale from the per-serving values */
+function qtySheet(food, isNew) {
+  const per = food.per || 100, unit = food.unit || 'g';
+  sheet(food.name, `
+    <div class="card mb pad-sm">
+      <div class="li-s">Per ${per}${unit} · ${round(food.kcal)} kcal · ${round(food.p)}P ${round(food.c)}C ${round(food.f)}F</div>
+    </div>
+    <div class="field"><label class="field-l">How much? (${unit})</label>
+      <input id="qtyIn" type="number" inputmode="decimal" value="${per}" step="any"></div>
+    <div class="card mb" id="qtyPreview"></div>
+    <div class="row" style="gap:8px">
+      <button class="btn grow" onclick="renderFoodSheet()">Back</button>
+      <button class="btn btn-primary grow" id="qtyGo">Log to ${MEALS.find(m => m[0] === _foodMeal)[1]}</button>
+    </div>`, () => {
+    const inp = $('qtyIn');
+    const upd = () => {
+      const q = Number(inp.value) || 0, k = q / per;
+      $('qtyPreview').innerHTML = `
+        <div class="kv"><span class="kv-k">Calories</span><span class="kv-v">${round(food.kcal * k)}</span></div>
+        <div class="kv"><span class="kv-k">Protein</span><span class="kv-v">${round(food.p * k, 1)} g</span></div>
+        <div class="kv"><span class="kv-k">Carbs</span><span class="kv-v">${round(food.c * k, 1)} g</span></div>
+        <div class="kv"><span class="kv-k">Fat</span><span class="kv-v">${round(food.f * k, 1)} g</span></div>`;
+    };
+    inp.oninput = upd; upd();
+    setTimeout(() => { inp.focus(); inp.select(); }, 250);
+    $('qtyGo').onclick = () => {
+      const q = Number(inp.value) || 0, k = q / per;
+      if (!q) return;
+      logEntry({ name: food.name, brand: food.brand, qty: q, unit,
+        kcal: food.kcal * k, p: food.p * k, c: food.c * k, f: food.f * k });
+      /* save to My Foods for one-tap reuse next time */
+      const exists = DB.foods.find(x => x.name === food.name && x.brand === food.brand);
+      if (exists) exists.uses = (exists.uses || 0) + 1;
+      else if (isNew) DB.foods.push({ id: uid(), name: food.name, brand: food.brand, per, unit,
+        kcal: food.kcal, p: food.p, c: food.c, f: food.f, uses: 1 });
+      save(); renderFoodSheet();
+    };
+  });
+}
+function quickAdd() {
+  const name = $('qName').value.trim() || 'Quick add';
+  const kcal = Number($('qKcal').value) || 0, p = Number($('qP').value) || 0;
+  const c = Number($('qC').value) || 0, f = Number($('qF').value) || 0;
+  if (!kcal && !p && !c && !f) return;
+  logEntry({ name, kcal, p, c, f, qty: 1, unit: '' });
+  DB.foods.push({ id: uid(), name, per: 1, unit: 'serving', kcal, p, c, f, uses: 1 });
+  save(); renderFoodSheet();
+}
+function logEntry(e) {
+  const d = today(), n = nutDay(d);
+  n.entries.push({ id: uid(), meal: _foodMeal, ...e,
+    kcal: round(e.kcal), p: round(e.p, 1), c: round(e.c, 1), f: round(e.f, 1) });
+  DB.nutrition[d] = n; logScore(); haptic();
+  toast('Logged · ' + round(e.kcal) + ' kcal');
+}
+function delFoodEntry(id) {
+  const d = today(), n = nutDay(d);
+  n.entries = n.entries.filter(e => e.id !== id);
+  DB.nutrition[d] = n; logScore(); save();
+}
+function delSavedFood(id) { DB.foods = DB.foods.filter(f => f.id !== id); save(false); renderFoodSheet(); }
+
+/* barcode — native detector where available, typed fallback everywhere else */
+async function scanBarcode() {
+  if (!('BarcodeDetector' in window)) {
+    formSheet('Enter barcode', [{ k: 'code', l: 'Barcode number', type: 'number' }],
+      o => { if (o.code) lookupBarcode(String(o.code)); });
+    return;
+  }
+  sheet('Scan barcode', `
+    <video id="scanVid" autoplay playsinline muted style="width:100%;border-radius:14px;background:#000;aspect-ratio:4/3;object-fit:cover"></video>
+    <div class="li-s tc mt">Point at the barcode</div>
+    <button class="btn btn-block mt" onclick="stopScan();renderFoodSheet()">Cancel</button>`, async () => {
+    try {
+      window._scanStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+      $('scanVid').srcObject = window._scanStream;
+      const det = new BarcodeDetector({ formats: ['ean_13', 'ean_8', 'upc_a', 'upc_e'] });
+      window._scanInt = setInterval(async () => {
+        const v = $('scanVid'); if (!v || !v.videoWidth) return;
+        try { const c = await det.detect(v); if (c.length) { stopScan(); lookupBarcode(c[0].rawValue); } } catch (e) {}
+      }, 400);
+    } catch (e) {
+      stopScan();
+      formSheet('Enter barcode', [{ k: 'code', l: 'Camera unavailable — type it', type: 'number' }],
+        o => { if (o.code) lookupBarcode(String(o.code)); });
+    }
+  });
+}
+function stopScan() {
+  clearInterval(window._scanInt);
+  if (window._scanStream) { window._scanStream.getTracks().forEach(t => t.stop()); window._scanStream = null; }
+}
+async function lookupBarcode(code) {
+  toast('Looking up…');
+  try {
+    const r = await fetch('https://world.openfoodfacts.org/api/v0/product/' + code + '.json');
+    const data = await r.json();
+    if (!data.product) { toast('Not in the database'); renderFoodSheet(); return; }
+    const p = data.product, nm = p.nutriments || {};
+    const kcal = Math.round(nm['energy-kcal_100g'] || nm['energy-kcal'] || 0);
+    if (!kcal) { toast('No nutrition data for that one'); renderFoodSheet(); return; }
+    qtySheet({ name: p.product_name || 'Scanned item', brand: (p.brands || '').split(',')[0].trim(),
+      per: 100, unit: 'g', kcal, p: +(nm.proteins_100g || 0), c: +(nm.carbohydrates_100g || 0), f: +(nm.fat_100g || 0) }, true);
+  } catch (e) { toast('Lookup failed — try Quick add'); renderFoodSheet(); }
 }
 
-/* ── PROGRESS (photos + strength progression) ─────────────────── */
+function nutTargets() {
+  const T = DB.nutTarget;
+  formSheet('Daily targets', [
+    { k: 'kcal', l: 'Calories', type: 'number', v: T.kcal },
+    { k: 'p', l: 'Protein (g)', type: 'number', v: T.p },
+    { k: 'c', l: 'Carbs (g)', type: 'number', v: T.c },
+    { k: 'f', l: 'Fat (g)', type: 'number', v: T.f },
+    { k: 'water', l: 'Water (cups · 16 = 1 gal)', type: 'number', v: T.water },
+    { k: 'milk', l: 'Milk (cups · 5.3 = 1/3 gal)', type: 'number', v: T.milk, step: 'any' },
+    { k: 'milkType', l: 'Milk type', type: 'select', v: DB.profile.milk || 'whole',
+      opts: [['whole', 'Whole'], ['twop', '2%'], ['skim', 'Skim']] },
+  ], o => {
+    DB.profile.milk = o.milkType;
+    DB.nutTarget = { kcal: o.kcal || 2900, p: o.p || 130, c: o.c || 425, f: o.f || 80,
+                     water: o.water || 16, milk: o.milk || 5.3 };
+    save();
+  }, `<div class="card mb pad-sm"><div class="li-s" style="line-height:1.6">
+      Computed for 122.4 lb at 5'5" training 6x/week: maintenance ≈ 2,590 kcal, plus a ~350 surplus.
+      Update your weigh-in and these should rise with you.</div></div>`);
+}
+
+/* ═══ PROGRESS ════════════════════════════════════════════════════ */
 function fitProg() {
   const exNames = [...new Set(DB.workouts.flatMap(w => (w.ex || []).map(e => e.name)))];
   const sel = DB.ui.sub._ex || exNames[0] || '';
@@ -1608,11 +1929,12 @@ function fitProg() {
     .sort((a, b) => a.date.localeCompare(b.date))
     .map(w => {
       const e = w.ex.find(x => x.name === sel);
-      const best = Math.max(...(e.sets || []).map(s => e1rm(s.w, s.r)), 0);
-      return { date: w.date, val: round(best, 1) };
+      return { date: w.date, val: round(Math.max(...(e.sets || []).map(s => e1rm(s.w, s.r)), 0), 1) };
     }).filter(p => p.val > 0);
-
   const photos = [...DB.photos].sort((a, b) => b.date.localeCompare(a.date));
+  const mk = monthKey();
+  const ws = DB.workouts.filter(w => w.date.startsWith(mk));
+  const days = Object.keys(DB.nutrition).filter(k => k.startsWith(mk));
 
   return `
   <div class="sect">${sectionHead('Strength progression')}
@@ -1632,24 +1954,21 @@ function fitProg() {
       <figure><img src="${p.data}" alt="${esc(p.date)}" loading="lazy">
         <button class="del" onclick="delPhoto('${p.id}')">✕</button>
         <figcaption>${esc(fmtD(p.date))}</figcaption></figure>`).join('')}</div>`
-    : `<div class="card"><div class="empty">Same lighting, same pose, same time of day.<br>Monthly is plenty.</div></div>`}
+    : `<div class="card"><div class="empty">Same lighting, same pose, same time of day.<br>Every 2 weeks is plenty on a bulk.</div></div>`}
     <input type="file" id="photoIn" accept="image/*" class="hidden">
   </div>
 
   <div class="sect">${sectionHead('This month')}
     <div class="card">
-      ${(() => {
-        const mk = monthKey();
-        const ws = DB.workouts.filter(w => w.date.startsWith(mk));
-        const days = Object.keys(DB.nutrition).filter(k => k.startsWith(mk));
-        const hitP = days.filter(k => (DB.nutrition[k].p || 0) >= DB.nutTarget.p).length;
-        return `
-        <div class="kv"><span class="kv-k">Sessions</span><span class="kv-v">${new Set(ws.map(w => w.date)).size}</span></div>
-        <div class="kv"><span class="kv-k">Total volume</span><span class="kv-v">${round(sum(ws.map(volOf))).toLocaleString()} ${DB.profile.unit}</span></div>
-        <div class="kv"><span class="kv-k">Avg session</span><span class="kv-v">${ws.length ? round(avg(ws.map(w => w.dur || 0))) : 0} min</span></div>
-        <div class="kv"><span class="kv-k">Protein target hit</span><span class="kv-v">${hitP} days</span></div>
-        <div class="kv"><span class="kv-k">New PRs</span><span class="kv-v">${DB.prs.filter(p => p.date.startsWith(mk)).length}</span></div>`;
-      })()}
+      <div class="kv"><span class="kv-k">Sessions</span><span class="kv-v">${new Set(ws.map(w => w.date)).size}</span></div>
+      <div class="kv"><span class="kv-k">Total volume</span><span class="kv-v">${round(sum(ws.map(volOf))).toLocaleString()} ${DB.profile.unit}</span></div>
+      <div class="kv"><span class="kv-k">Calorie target hit</span><span class="kv-v">${days.filter(k => nutTotals(k).kcal >= DB.nutTarget.kcal * .95).length} days</span></div>
+      <div class="kv"><span class="kv-k">Protein target hit</span><span class="kv-v">${days.filter(k => nutTotals(k).p >= DB.nutTarget.p).length} days</span></div>
+      <div class="kv"><span class="kv-k">New PRs</span><span class="kv-v">${DB.prs.filter(p => p.date.startsWith(mk)).length}</span></div>
+      <div class="kv"><span class="kv-k">Weight change</span><span class="kv-v">${(() => {
+        const m = DB.weights.filter(w => w.date.startsWith(mk));
+        return m.length > 1 ? (m[m.length - 1].w - m[0].w > 0 ? '+' : '') + round(m[m.length - 1].w - m[0].w, 1) + ' ' + DB.profile.unit : '—';
+      })()}</span></div>
     </div>
   </div>`;
 }
@@ -1660,7 +1979,6 @@ function addPhoto() {
     const img = new Image(), rd = new FileReader();
     rd.onload = ev => {
       img.onload = () => {
-        /* downscale hard — localStorage is small and photos are the #1 way to blow it */
         const max = 620, sc = Math.min(1, max / Math.max(img.width, img.height));
         const cv = document.createElement('canvas');
         cv.width = Math.round(img.width * sc); cv.height = Math.round(img.height * sc);
@@ -1670,8 +1988,7 @@ function addPhoto() {
       };
       img.src = ev.target.result;
     };
-    rd.readAsDataURL(f);
-    inp.value = '';
+    rd.readAsDataURL(f); inp.value = '';
   };
   inp.click();
 }
@@ -1681,8 +1998,8 @@ function delPhoto(id) { askConfirm('Delete this photo?', () => { DB.photos = DB.
 /* ═══════════════════════════════════════════════════════════════════
    BUSINESS — Nick Digital · pet care · whatever's next
    ═══════════════════════════════════════════════════════════════════ */
-const VENTURES = [['nd', 'Nick Digital'], ['pet', 'Pet Care'], ['other', 'Other']];
-const ventureLabel = k => (VENTURES.find(v => v[0] === k) || ['', 'Other'])[1];
+const VENTURES = () => DB.ventures;
+const ventureLabel = k => (DB.ventures.find(v => v[0] === k) || ['', 'Other'])[1];
 const STAGES = [
   ['new', 'New'], ['contacted', 'Contacted'], ['qualified', 'Qualified'],
   ['proposal', 'Proposal'], ['won', 'Won'], ['lost', 'Lost'],
@@ -1762,7 +2079,7 @@ function leadSheet(id) {
   formSheet(l ? 'Edit lead' : 'New lead', [
     { k: 'name', l: 'Name', v: l?.name, ph: 'Contact name' },
     { k: 'company', l: 'Company', v: l?.company },
-    { k: 'biz', l: 'Venture', type: 'select', opts: VENTURES, v: l?.biz || 'nd' },
+    { k: 'biz', l: 'Venture', type: 'select', opts: VENTURES(), v: l?.biz || 'nd' },
     { k: 'stage', l: 'Stage', type: 'select', opts: STAGES, v: l?.stage || 'new' },
     { k: 'value', l: 'Deal value', type: 'number', v: l?.value, step: 'any' },
     { k: 'phone', l: 'Phone', type: 'tel', v: l?.phone },
@@ -1868,6 +2185,16 @@ const PSTATUS = [['active', 'Active'], ['queued', 'Queued'], ['blocked', 'Blocke
 function bizProj() {
   const groups = PSTATUS.map(([id, lbl]) => ({ id, lbl, ps: DB.projects.filter(p => p.status === id) }));
   return `
+  <div class="sect">${sectionHead('Offers & pricing', ['+ Offer', 'svcSheet()'])}
+    <div class="card">${DB.services.length ? DB.services.map(v => `
+      <div class="li" onclick="svcSheet('${v.id}')" style="cursor:pointer">
+        <div class="li-main"><div class="li-t">${esc(v.name)}</div>
+          <div class="li-s">${v.type === 'monthly' ? 'Monthly retainer' : 'One-off project'}</div></div>
+        <div class="num fs14" style="font-weight:700">${money(v.price)}${v.type === 'monthly' ? '<span class="muted fs11">/mo</span>' : ''}</div>
+        <button class="x" onclick="event.stopPropagation();delSvc('${v.id}')">✕</button></div>`).join('')
+      : `<div class="empty">You said prices aren't set yet — that's the first thing to fix.<br>You can't hit $10k/month without knowing what one sale is worth.<br><br>Name a website build and an automation retainer, put a number on each,<br>and every deal you log will auto-fill from it.</div>`}</div>
+  </div>
+
   <button class="btn btn-accent btn-block mb" style="--_c:var(--biz)" onclick="projSheet()">+ New project</button>
   ${groups.map(({ id, lbl, ps }) => ps.length || id === 'active' ? `
     <div class="sect">${sectionHead(lbl + ' · ' + ps.length)}
@@ -1885,7 +2212,7 @@ function projSheet(id) {
   const p = id ? DB.projects.find(x => x.id === id) : null;
   formSheet(p ? 'Edit project' : 'New project', [
     { k: 'name', l: 'Project', v: p?.name, ph: 'e.g. Ruiz Plumbing — site rebuild' },
-    { k: 'biz', l: 'Venture', type: 'select', opts: VENTURES, v: p?.biz || 'nd' },
+    { k: 'biz', l: 'Venture', type: 'select', opts: VENTURES(), v: p?.biz || 'nd' },
     { k: 'client', l: 'Client', v: p?.client },
     { k: 'status', l: 'Status', type: 'select', opts: PSTATUS, v: p?.status || 'active' },
     { k: 'value', l: 'Value', type: 'number', v: p?.value, step: 'any' },
@@ -1908,8 +2235,10 @@ function bizRev() {
   const delta = lastRev ? round((monthRev - lastRev) / lastRev * 100) : 0;
   const allTime = sum(DB.revenue.map(r => r.amt));
   const goal = DB.goals.find(g => g.dom === 'biz' && !g.done && g.unit === '$');
+  const rungs = [1000, 2500, 5000, 10000, 20000];
+  const nextRung = rungs.find(r => monthRev < r) || 20000;
 
-  const byVenture = VENTURES.map(([id, lbl]) => ({
+  const byVenture = DB.ventures.map(([id, lbl]) => ({
     lbl, val: sum(DB.revenue.filter(r => r.biz === id && r.date.startsWith(mk)).map(r => r.amt))
   })).filter(v => v.val > 0);
 
@@ -1928,9 +2257,20 @@ function bizRev() {
       ${lastRev ? `<span class="delta ${delta >= 0 ? 'up' : 'dn'}">${delta >= 0 ? '+' : ''}${delta}%</span>` : ''}
     </div>
     <div class="li-s">All time ${kmoney(allTime)}${lastRev ? ' · last month ' + kmoney(lastRev) : ''}</div>
+    <div class="row mt-sm" style="gap:6px"><span class="pill" style="--_c:var(--fit)">MRR ${kmoney(mrr())}</span>
+      <span class="pill" style="--_c:var(--biz)">one-off ${kmoney(monthRev - mrr())}</span></div>
     ${goal ? `<div class="mt"><div class="bar" style="--_c:var(--biz)"><span style="width:${pct(monthRev, goal.target)}%"></span></div>
       <div class="li-s" style="margin-top:6px">${esc(goal.title)} — ${kmoney(monthRev)} of ${kmoney(goal.target)}</div></div>` : ''}
     <button class="btn btn-accent btn-block mt" style="--_c:var(--biz)" onclick="revSheet()">+ Log revenue</button>
+  </div>
+
+  <div class="card mb" style="--_c:var(--biz)">
+    <div class="eyebrow">Road to $10k/month</div>
+    <div class="li-s" style="margin:7px 0 10px;white-space:normal">Your floor is $10k. Next rung: ${kmoney(nextRung)} — that's ${kmoney(Math.max(0, nextRung - monthRev))} more this month.</div>
+    ${rungs.map(r => `<div class="row" style="gap:9px;margin-bottom:6px">
+      <div class="fs11 muted num" style="width:42px;flex:0 0 auto">${kmoney(r)}</div>
+      <div class="bar thin grow" style="--_c:${monthRev >= r ? 'var(--fit)' : 'var(--biz)'}"><span style="width:${pct(monthRev, r)}%"></span></div>
+      <div style="width:16px;flex:0 0 auto;text-align:right">${monthRev >= r ? '✅' : ''}</div></div>`).join('')}
   </div>
 
   <div class="sect">${sectionHead('Last 6 months')}
@@ -1960,11 +2300,22 @@ function bizRev() {
 function revSheet() {
   formSheet('Log revenue', [
     { k: 'amt', l: 'Amount', type: 'number', step: 'any' },
-    { k: 'biz', l: 'Venture', type: 'select', opts: VENTURES, v: 'nd' },
+    { k: 'kind', l: 'Type', type: 'select', v: 'once',
+      opts: [['once', 'One-off (website build)'], ['monthly', 'Recurring (automation retainer)']] },
+    { k: 'biz', l: 'Venture', type: 'select', opts: VENTURES(), v: 'nd' },
     { k: 'client', l: 'Client', ph: 'Who paid?' },
     { k: 'date', l: 'Date', type: 'date', v: today() },
     { k: 'note', l: 'Note', ph: 'What for?' },
   ], o => { if (!o.amt) return; DB.revenue.push({ id: uid(), ...o }); logScore(); save(); toast('+' + kmoney(o.amt)); });
+}
+/* MRR = the retainers still live this month. Automations are the compounding half. */
+function mrr() {
+  const seen = {};
+  DB.revenue.filter(r => r.kind === 'monthly').forEach(r => {
+    const k = (r.client || '?') + '|' + r.biz;
+    if (!seen[k] || r.date > seen[k].date) seen[k] = r;
+  });
+  return sum(Object.values(seen).map(r => r.amt));
 }
 function delRev(id) { DB.revenue = DB.revenue.filter(r => r.id !== id); save(); }
 
@@ -2001,6 +2352,21 @@ function ideaSheet(id) {
   });
 }
 function delIdea(id) { DB.ideas = DB.ideas.filter(i => i.id !== id); save(); }
+
+function svcSheet(id) {
+  const v = id ? DB.services.find(x => x.id === id) : null;
+  formSheet(v ? 'Edit offer' : 'New offer', [
+    { k: 'name', l: 'Offer', v: v?.name, ph: 'Website build · Automation retainer' },
+    { k: 'price', l: 'Price', type: 'number', v: v?.price, step: 'any' },
+    { k: 'type', l: 'Billing', type: 'select', v: v?.type || 'once',
+      opts: [['once', 'One-off'], ['monthly', 'Monthly retainer']] },
+  ], o => {
+    if (!o.name) return;
+    if (v) Object.assign(v, o); else DB.services.push({ id: uid(), ...o });
+    save();
+  });
+}
+function delSvc(id) { DB.services = DB.services.filter(s => s.id !== id); save(); }
 
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -2167,7 +2533,15 @@ function delTx(id) { DB.tx = DB.tx.filter(t => t.id !== id); save(); }
 function mnSave() {
   const total = sum(DB.pots.map(p => p.saved)), target = sum(DB.pots.map(p => p.target));
   return `
-  ${DB.pots.length ? `<div class="card accent mb" style="--_c:var(--money)">
+  <div class="card accent mb" style="--_c:var(--money)">
+    <div class="eyebrow">Total saved</div>
+    <div class="big" style="margin-top:6px">${money(sum(DB.assets.filter(a => ['cash','savings','invest'].includes(a.type)).map(a => a.val)))}</div>
+    <div class="li-s" style="white-space:normal">Across your cash, savings and investments</div>
+    <div class="sub mt" style="line-height:1.6">You said you're saving without a target. That works — but a number
+      with a date behind it saves faster than one without. Add one below whenever you're ready.</div>
+  </div>
+
+  ${DB.pots.length ? `<div class="card mb" style="--_c:var(--money)">
     <div class="eyebrow">Total saved toward goals</div>
     <div class="big" style="margin-top:6px">${money(total)}</div>
     <div class="li-s">of ${money(target)} across ${DB.pots.length} goal${DB.pots.length === 1 ? '' : 's'}</div>
@@ -2338,8 +2712,25 @@ RENDERERS.life = function () {
 
 /* ── SCHOOL ───────────────────────────────────────────────────── */
 const ATYPE = [['hw', 'Homework'], ['essay', 'Essay'], ['project', 'Project'], ['lab', 'Lab'], ['reading', 'Reading']];
+const APP_TYPES = [['ea', 'Early Action'], ['ed', 'Early Decision'], ['rd', 'Regular Decision'], ['roll', 'Rolling']];
+const APP_STATUS = [['researching', 'Researching'], ['essay', 'Essay in progress'], ['submitted', 'Submitted'],
+                    ['accepted', 'Accepted'], ['waitlist', 'Waitlisted'], ['denied', 'Denied']];
+/* the senior-year calendar nobody warns you about until it's late */
+const SENIOR_TIMELINE = [
+  ['Common App opens — start the account', '2026-08-01'],
+  ['Draft the personal statement', '2026-09-15'],
+  ['Ask teachers for recommendation letters', '2026-09-30'],
+  ['FAFSA opens — file it', '2026-10-01'],
+  ['Early Action / Early Decision deadlines', '2026-11-01'],
+  ['Regular Decision deadlines', '2027-01-01'],
+  ['CSS Profile / financial aid follow-ups', '2027-02-01'],
+  ['Decisions arrive — compare offers', '2027-03-15'],
+  ['Commit — deposit deadline', '2027-05-01'],
+];
 function lfSchool() {
   const d = today();
+  const start = DB.schoolYear.start;
+  const daysToStart = daysBetween(d, start);
   const open = DB.assign.filter(a => !a.done).sort((a, b) => (a.due || 'z').localeCompare(b.due || 'z'));
   const overdue = open.filter(a => a.due && a.due < d);
   const thisWeek = open.filter(a => a.due && a.due >= d && daysBetween(d, a.due) <= 7);
@@ -2349,6 +2740,19 @@ function lfSchool() {
   const collegeDone = DB.college.filter(c => c.done).length;
 
   return `
+  ${daysToStart > 0 ? `<div class="card accent mb" style="--_c:var(--school)">
+    <div class="eyebrow">Senior year</div>
+    <div class="focus-t" style="font-size:19px;margin-top:6px">${daysToStart} day${daysToStart === 1 ? '' : 's'} until school starts</div>
+    <div class="li-s" style="white-space:normal">${fmtDW(start)} · courses and assignments will fill in once you have a schedule</div>
+  </div>` : ''}
+
+  ${!DB.college.length ? `<div class="card mb" style="--_c:var(--school)">
+    <div class="card-t">📋 Load the senior-year timeline?</div>
+    <div class="sub mt-sm" style="line-height:1.6">Common App is already open (Aug 1) and Early Action deadlines are Nov 1 —
+      that's ${daysBetween(d, '2026-11-01')} days away. I can drop the standard milestones in with dates.</div>
+    <button class="btn btn-block mt" onclick="loadTimeline()">Load ${SENIOR_TIMELINE.length} milestones</button>
+  </div>` : ''}
+
   <div class="grid g3 mb">
     <div class="card pad-sm"><div class="eyebrow">Open</div>
       <div class="tile-v" style="margin-top:6px">${open.length}</div><div class="tile-l">assignments</div></div>
@@ -2393,6 +2797,16 @@ function lfSchool() {
           <div class="li-s">${esc(e.course || '')} · ${fmtDW(e.date)}</div></div>
         <span class="delta ${relDue(e.date).tone}">${relDue(e.date).txt}</span></div>`).join('')}</div>
   </div>` : ''}
+
+  <div class="sect">${sectionHead('Schools', ['+ School', 'schoolSheet()'])}
+    <div class="card">${DB.schools.length ? [...DB.schools].sort((a, b) => (a.deadline || 'z').localeCompare(b.deadline || 'z')).map(sc => {
+      const r = sc.deadline ? relDue(sc.deadline) : null;
+      return `<div class="li" onclick="schoolSheet('${sc.id}')" style="cursor:pointer">
+        <div class="li-main"><div class="li-t">${esc(sc.name)}</div>
+          <div class="li-s">${esc((APP_TYPES.find(t => t[0] === sc.type) || [, ''])[1])} · ${esc((APP_STATUS.find(t => t[0] === sc.status) || [, 'Researching'])[1])}</div></div>
+        ${r ? `<span class="delta ${r.tone}">${r.txt}</span>` : ''}</div>`;
+    }).join('') : `<div class="empty">No schools on the list yet.<br>Even a rough list makes the deadlines real.</div>`}</div>
+  </div>
 
   <div class="sect">${sectionHead('College plan', ['+ Step', 'collegeSheet()'])}
     <div class="card">
@@ -2468,29 +2882,50 @@ const FOCUS_AREAS = [
 const focusLabel = k => (FOCUS_AREAS.find(f => f[0] === k) || [, 'Free play'])[1];
 const SONG_STATUS = [['want', 'Want to learn'], ['learning', 'Learning'], ['solid', 'Got it'], ['perf', 'Performance ready']];
 
+const INSTS = [['drums', 'Drums', '🥁'], ['guitar', 'Guitar', '🎸']];
+const instOf = s => s.inst || 'drums';
 function lfMusic() {
   const wk = weekDates();
-  const wkMins = sum(DB.drum.filter(s => wk.includes(s.date)).map(s => s.mins));
-  const totalMins = sum(DB.drum.map(s => s.mins));
-  const streak = streakOf(d => DB.drum.some(s => s.date === d));
+  const inst = DB.ui.sub._inst || 'drums';
+  const target = inst === 'guitar' ? DB.music.guitarTarget : DB.music.drumTarget;
+  const mine = DB.drum.filter(s => instOf(s) === inst);
+  const wkMins = sum(mine.filter(s => wk.includes(s.date)).map(s => s.mins));
+  const totalMins = sum(mine.map(s => s.mins));
+  const streak = streakOf(d => mine.some(s => s.date === d));
+  const drumWk = sum(DB.drum.filter(s => wk.includes(s.date) && instOf(s) === 'drums').map(s => s.mins));
+  const gtrWk  = sum(DB.drum.filter(s => wk.includes(s.date) && instOf(s) === 'guitar').map(s => s.mins));
   /* suggest the least-practiced area over the last 30 sessions */
-  const recent = DB.drum.slice(-30);
+  const recent = mine.slice(-30);
   const counts = Object.fromEntries(FOCUS_AREAS.map(f => [f[0], 0]));
   recent.forEach(s => { if (counts[s.focus] != null) counts[s.focus]++; });
   const pick = FOCUS_AREAS.reduce((m, f) => counts[f[0]] < counts[m[0]] ? f : m, FOCUS_AREAS[0]);
-  const bpmSeries = DB.drum.filter(s => s.bpm).map(s => ({ date: s.date, val: s.bpm }));
+  const bpmSeries = mine.filter(s => s.bpm).map(s => ({ date: s.date, val: s.bpm }));
 
   const songs = SONG_STATUS.map(([id, lbl]) => ({ id, lbl, list: DB.songs.filter(s => s.status === id) }));
   const gigs = [...DB.gigs].sort((a, b) => (a.date || 'z').localeCompare(b.date || 'z'));
 
   return `
+  <div class="grid g2 mb">
+    ${INSTS.map(([id, lbl, ic]) => {
+      const t = id === 'guitar' ? DB.music.guitarTarget : DB.music.drumTarget;
+      const m = id === 'guitar' ? gtrWk : drumWk;
+      return `<div class="tile" style="--_c:var(--music);${inst === id ? 'border-color:color-mix(in srgb,var(--music) 45%,transparent)' : ''}"
+        onclick="DB.ui.sub._inst='${id}';save()">
+        <span class="tile-i">${ic}</span>
+        <div class="tile-v" style="color:${m >= t ? 'var(--music)' : 'var(--text)'}">${m}<small style="font-size:13px;color:var(--text-3)">/${t}</small></div>
+        <div class="tile-l">${lbl} · min this wk</div>
+        <div class="bar thin" style="--_c:var(--music);margin-top:8px"><span style="width:${pct(m, t)}%"></span></div>
+      </div>`;
+    }).join('')}
+  </div>
+
   <div class="card accent mb" style="--_c:var(--music)">
     <div class="row" style="gap:16px;align-items:center">
-      ${ring(pct(wkMins, 150), { size: 76, sw: 7, color: 'var(--music)', val: wkMins, vs: 18, label: 'min/wk' })}
+      ${ring(pct(wkMins, target), { size: 76, sw: 7, color: 'var(--music)', val: wkMins, vs: 18, label: 'min/wk' })}
       <div class="grow">
-        <div class="eyebrow">Practice streak</div>
+        <div class="eyebrow">${esc(INSTS.find(i => i[0] === inst)[1])} streak</div>
         <div class="big sm">${streak}<small> days</small></div>
-        <div class="li-s">${round(totalMins / 60, 1)} hours behind the kit, all time</div>
+        <div class="li-s">${round(totalMins / 60, 1)} hours all time · target ${target} min/week</div>
       </div>
     </div>
     <button class="btn btn-accent btn-block mt" style="--_c:var(--music)" onclick="drumSheet()">+ Log practice</button>
@@ -2506,9 +2941,9 @@ function lfMusic() {
   <div class="sect">${sectionHead('Minutes · this week')}
     <div class="card">${barChart(wk.map(k => ({
       label: DOW[new Date(k + 'T12:00:00').getDay()][0],
-      val: sum(DB.drum.filter(s => s.date === k).map(s => s.mins))
-    })), { color: 'var(--music)', target: 21, h: 104 })}
-      <div class="li-s tc">Dashed line = 21 min/day to hit 150/week</div></div>
+      val: sum(mine.filter(s => s.date === k).map(s => s.mins))
+    })), { color: 'var(--music)', target: Math.round(target / 7), h: 104 })}
+      <div class="li-s tc" style="white-space:normal">Dashed line = ${Math.round(target / 7)} min/day to hit ${target}/week</div></div>
   </div>
 
   ${bpmSeries.length > 1 ? `<div class="sect">${sectionHead('Tempo ceiling')}
@@ -2539,8 +2974,9 @@ function lfMusic() {
   </div>
 
   <div class="sect">${sectionHead('Recent sessions')}
-    <div class="card">${DB.drum.length ? [...DB.drum].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 8).map(s => `
-      <div class="li"><div class="li-main"><div class="li-t">${esc(focusLabel(s.focus))}</div>
+    <div class="card">${DB.drum.length ? [...DB.drum].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 10).map(s => `
+      <div class="li"><span style="font-size:14px">${instOf(s) === 'guitar' ? '🎸' : '🥁'}</span>
+        <div class="li-main"><div class="li-t">${esc(focusLabel(s.focus))}</div>
         <div class="li-s">${fmtDW(s.date)}${s.bpm ? ' · ' + s.bpm + ' bpm' : ''}${s.note ? ' · ' + esc(s.note) : ''}</div></div>
         <div class="num fs13" style="font-weight:650">${s.mins}<span class="muted fs11">m</span></div>
         <button class="x" onclick="delDrum('${s.id}')">✕</button></div>`).join('')
@@ -2549,6 +2985,7 @@ function lfMusic() {
 }
 function drumSheet() {
   formSheet('Log practice', [
+    { k: 'inst', l: 'Instrument', type: 'select', opts: INSTS.map(i => [i[0], i[1]]), v: DB.ui.sub._inst || 'drums' },
     { k: 'mins', l: 'Minutes', type: 'number', v: 30 },
     { k: 'focus', l: 'Focus', type: 'select', opts: FOCUS_AREAS.map(f => [f[0], f[1]]), v: 'rudiments' },
     { k: 'bpm', l: 'Max clean BPM (optional)', type: 'number' },
@@ -2558,7 +2995,7 @@ function drumSheet() {
     if (!o.mins) return;
     DB.drum.push({ id: uid(), ...o, date: o.date || today() });
     DB.drum.sort((a, b) => a.date.localeCompare(b.date));
-    logScore(); save(); toast('🥁 ' + o.mins + ' min logged');
+    logScore(); save(); toast((o.inst === 'guitar' ? '🎸 ' : '🥁 ') + o.mins + ' min logged');
   });
 }
 function delDrum(id) { DB.drum = DB.drum.filter(s => s.id !== id); save(); }
@@ -2741,6 +3178,28 @@ function updatePage(id) {
 }
 function finishBook(id) { const b = DB.books.find(x => x.id === id); if (b) { b.done = true; toast('📚 Finished'); logScore(); save(); } }
 
+function loadTimeline() {
+  SENIOR_TIMELINE.forEach(([t, due]) => {
+    if (!DB.college.some(c => c.t === t)) DB.college.push({ id: uid(), t, due, done: false, note: '' });
+  });
+  logScore(); save(); toast('Senior timeline loaded');
+}
+function schoolSheet(id) {
+  const sc = id ? DB.schools.find(x => x.id === id) : null;
+  formSheet(sc ? 'Edit school' : 'Add school', [
+    { k: 'name', l: 'School', v: sc?.name },
+    { k: 'type', l: 'Application type', type: 'select', opts: APP_TYPES, v: sc?.type || 'rd' },
+    { k: 'deadline', l: 'Deadline', type: 'date', v: sc?.deadline },
+    { k: 'status', l: 'Status', type: 'select', opts: APP_STATUS, v: sc?.status || 'researching' },
+    { k: 'note', l: 'Notes', type: 'textarea', v: sc?.note, ph: 'Major, cost, why it fits…' },
+  ], o => {
+    if (!o.name) return;
+    if (sc) Object.assign(sc, o); else DB.schools.push({ id: uid(), ...o });
+    logScore(); save();
+  }, sc ? `<button class="btn btn-block mb" style="color:#FF6B6B" onclick="closeSheet();delSchool('${sc.id}')">Remove</button>` : '');
+}
+function delSchool(id) { DB.schools = DB.schools.filter(s => s.id !== id); save(); }
+
 
 /* ═══════════════════════════════════════════════════════════════════
    STATS — life score, streaks, trends, reports
@@ -2812,11 +3271,11 @@ function stScore() {
 }
 function weakAdvice(id, s) {
   return {
-    fit: 'Log a session and hit your protein. Four workouts a week is the floor, not the ceiling.',
+    fit: 'Eat. On a bulk the calories are the hard part, not the training — 2,900 kcal and 130g protein, every day.',
     biz: 'Pick up the phone. Twenty dials moves this number more than anything else on the list.',
-    money: 'Log what you actually spent this week, then set one savings goal a number can be measured against.',
-    school: 'Clear the oldest overdue item first. Overdue work compounds interest like debt.',
-    music: 'Twenty minutes on the kit today. Streaks are easier to keep than restart.',
+    money: 'Log what you actually spent this week. You cannot save deliberately without seeing where it goes.',
+    school: 'Senior year moves fast. Clear the oldest overdue item, then check your college timeline.',
+    music: 'Twenty minutes today — drums or guitar, whichever is further behind. Streaks are easier to keep than restart.',
     growth: 'Check your habits and write two lines in the journal. Cheapest points on the board.',
   }[id] || 'Pick one thing and do it today.';
 }
@@ -2830,13 +3289,20 @@ function stStreaks() {
     { label: 'Training', icon: '🏋️', color: 'var(--fit)', s: streakOf(d => DB.workouts.some(w => w.date === d)),
       has: d => DB.workouts.some(w => w.date === d) },
     { label: 'Protein target', icon: '🍗', color: 'var(--fit)',
-      s: streakOf(d => (DB.nutrition[d] || {}).p >= DB.nutTarget.p),
-      has: d => (DB.nutrition[d] || {}).p >= DB.nutTarget.p },
+      s: streakOf(d => nutTotals(d).p >= DB.nutTarget.p),
+      has: d => nutTotals(d).p >= DB.nutTarget.p },
+    { label: 'Calorie target', icon: '🍽️', color: 'var(--fit)',
+      s: streakOf(d => nutTotals(d).kcal >= DB.nutTarget.kcal * 0.95),
+      has: d => nutTotals(d).kcal >= DB.nutTarget.kcal * 0.95 },
     { label: 'Water target', icon: '💧', color: 'var(--money)',
-      s: streakOf(d => (DB.nutrition[d] || {}).water >= DB.nutTarget.water),
-      has: d => (DB.nutrition[d] || {}).water >= DB.nutTarget.water },
-    { label: 'Drum practice', icon: '🥁', color: 'var(--music)', s: streakOf(d => DB.drum.some(x => x.date === d)),
-      has: d => DB.drum.some(x => x.date === d) },
+      s: streakOf(d => nutDay(d).water >= DB.nutTarget.water),
+      has: d => nutDay(d).water >= DB.nutTarget.water },
+    { label: 'Drums', icon: '🥁', color: 'var(--music)',
+      s: streakOf(d => DB.drum.some(x => x.date === d && (x.inst || 'drums') === 'drums')),
+      has: d => DB.drum.some(x => x.date === d && (x.inst || 'drums') === 'drums') },
+    { label: 'Guitar', icon: '🎸', color: 'var(--music)',
+      s: streakOf(d => DB.drum.some(x => x.date === d && x.inst === 'guitar')),
+      has: d => DB.drum.some(x => x.date === d && x.inst === 'guitar') },
     { label: 'Journal', icon: '📓', color: 'var(--growth)', s: streakOf(d => DB.journal.some(j => j.date === d)),
       has: d => DB.journal.some(j => j.date === d) },
     { label: 'Cold calls', icon: '☎️', color: 'var(--biz)', s: streakOf(d => ((DB.calls[d] || {}).dials || 0) >= 20),
@@ -2961,8 +3427,9 @@ function stReport() {
   ${block('Body', 'var(--fit)', [
     ['Sessions', new Set(ws.map(w => w.date)).size],
     ['Total volume', round(sum(ws.map(volOf))).toLocaleString() + ' ' + DB.profile.unit],
-    ['Protein target hit', mDays.filter(k => (DB.nutrition[k].p || 0) >= DB.nutTarget.p).length + ' days'],
-    ['Water target hit', mDays.filter(k => (DB.nutrition[k].water || 0) >= DB.nutTarget.water).length + ' days'],
+    ['Calorie target hit', mDays.filter(k => nutTotals(k).kcal >= DB.nutTarget.kcal * .95).length + ' days'],
+    ['Protein target hit', mDays.filter(k => nutTotals(k).p >= DB.nutTarget.p).length + ' days'],
+    ['Gallon of water hit', mDays.filter(k => nutDay(k).water >= DB.nutTarget.water).length + ' days'],
     ['New PRs', DB.prs.filter(p => p.date.startsWith(mk)).length],
     ['Weight change', (() => {
       const m = DB.weights.filter(w => w.date.startsWith(mk));
@@ -2972,6 +3439,7 @@ function stReport() {
 
   ${block('Work', 'var(--biz)', [
     ['Revenue', money(rev)],
+    ['of which recurring (MRR)', money(mrr())],
     ['Dials', dials],
     ['Leads added', DB.leads.filter(l => (l.ts || '').startsWith(mk)).length],
     ['Deals won', DB.leads.filter(l => l.stage === 'won').length],
@@ -2991,7 +3459,9 @@ function stReport() {
     ['Assignments completed', assignDone],
     ['Still open', DB.assign.filter(a => !a.done).length],
     ['Upcoming exams', DB.exams.filter(e => e.date >= today()).length],
-    ['Drum minutes', drumMins + ' (' + round(drumMins / 60, 1) + ' hrs)'],
+    ['Drum minutes', sum(DB.drum.filter(x => x.date.startsWith(mk) && (x.inst || 'drums') === 'drums').map(x => x.mins))],
+    ['Guitar minutes', sum(DB.drum.filter(x => x.date.startsWith(mk) && x.inst === 'guitar').map(x => x.mins))],
+    ['Schools on list', DB.schools.length],
     ['Songs learning', DB.songs.filter(s => s.status === 'learning').length],
   ])}
 
@@ -3030,12 +3500,26 @@ function settingsSheet() {
     { k: 'name', l: 'Name', v: p.name },
     { k: 'currency', l: 'Currency symbol', v: p.currency },
     { k: 'unit', l: 'Weight unit', type: 'select', opts: [['lb', 'Pounds'], ['kg', 'Kilograms']], v: p.unit },
-  ], o => { Object.assign(DB.profile, o); save(); toast('Saved'); },
+    { k: 'splitTarget', l: 'Sessions per week', type: 'number', v: DB.split.target },
+    { k: 'goalWeight', l: 'Goal weight', type: 'number', v: DB.bulk.goalWeight, step: 'any' },
+    { k: 'drumTarget', l: 'Drums — min/week', type: 'number', v: DB.music.drumTarget },
+    { k: 'guitarTarget', l: 'Guitar — min/week', type: 'number', v: DB.music.guitarTarget },
+    { k: 'schoolStart', l: 'School starts', type: 'date', v: DB.schoolYear.start },
+  ], o => {
+    DB.split.target = o.splitTarget || 6;
+    DB.bulk.goalWeight = o.goalWeight || 132;
+    DB.music.drumTarget = o.drumTarget || 200;
+    DB.music.guitarTarget = o.guitarTarget || 100;
+    DB.schoolYear.start = o.schoolStart || DB.schoolYear.start;
+    DB.profile.name = o.name; DB.profile.currency = o.currency; DB.profile.unit = o.unit;
+    save(); toast('Saved');
+  },
   `<div class="card mb" style="padding:14px">
      <div class="eyebrow mb">Storage</div>
      <div class="kv"><span class="kv-k">Workouts</span><span class="kv-v">${DB.workouts.length}</span></div>
      <div class="kv"><span class="kv-k">Photos</span><span class="kv-v">${DB.photos.length}</span></div>
      <div class="kv"><span class="kv-k">Leads</span><span class="kv-v">${DB.leads.length}</span></div>
+     <div class="kv"><span class="kv-k">Saved foods</span><span class="kv-v">${DB.foods.length}</span></div>
      <div class="kv"><span class="kv-k">Journal entries</span><span class="kv-v">${DB.journal.length}</span></div>
      <div class="kv"><span class="kv-k">Approx. size</span><span class="kv-v">${round(JSON.stringify(DB).length / 1024)} KB</span></div>
    </div>
@@ -3076,24 +3560,30 @@ function seedIfEmpty() {
   if (DB._seeded) return;
   DB._seeded = true;
   if (!DB.habits.length) DB.habits = [
-    { id: uid(), name: 'Train', icon: '🏋️', dom: 'fit', log: {} },
-    { id: uid(), name: 'Hit protein', icon: '🍗', dom: 'fit', log: {} },
-    { id: uid(), name: 'Read 10 pages', icon: '📚', dom: 'growth', log: {} },
-    { id: uid(), name: 'Drums 20 min', icon: '🥁', dom: 'music', log: {} },
-    { id: uid(), name: 'No phone in bed', icon: '🌙', dom: 'growth', log: {} },
+    { id: uid(), name: 'Train (ULPPL)', icon: '🏋️', dom: 'fit', log: {} },
+    { id: uid(), name: 'Hit 2,900 kcal', icon: '🍽️', dom: 'fit', log: {} },
+    { id: uid(), name: 'Gallon of water', icon: '💧', dom: 'fit', log: {} },
+    { id: uid(), name: '1/3 gal milk', icon: '🥛', dom: 'fit', log: {} },
+    { id: uid(), name: 'Drums', icon: '🥁', dom: 'music', log: {} },
+    { id: uid(), name: 'Guitar', icon: '🎸', dom: 'music', log: {} },
+    { id: uid(), name: '20 dials', icon: '☎️', dom: 'biz', log: {} },
     { id: uid(), name: 'Ship one thing', icon: '⚡', dom: 'biz', log: {} },
   ];
   if (!DB.goals.length) DB.goals = [
-    { id: uid(), title: 'Nick Digital — first $2k month', dom: 'biz', cur: 0, target: 2000, unit: '$', due: '', done: false },
-    { id: uid(), title: 'Train 4x a week, every week', dom: 'fit', cur: 0, target: 52, unit: ' weeks', due: '', done: false },
-    { id: uid(), title: 'Practice 150 min a week', dom: 'music', cur: 0, target: 150, unit: ' min', due: '', done: false },
+    { id: uid(), title: 'Nick Digital — $10k month (the floor)', dom: 'biz', cur: 0, target: 10000, unit: '$', due: '', done: false },
+    { id: uid(), title: 'Reach 132 lb lean', dom: 'fit', cur: 122.4, target: 132, unit: 'lb', due: '', done: false },
+    { id: uid(), title: 'ULPPL — 6 sessions a week', dom: 'fit', cur: 0, target: 6, unit: ' /wk', due: '', done: false },
+    { id: uid(), title: 'Drums 200 min + guitar 100 min a week', dom: 'music', cur: 0, target: 300, unit: ' min', due: '', done: false },
   ];
   if (!DB.projects.length) DB.projects = [
-    { id: uid(), name: 'Nick Digital — offer & pricing', biz: 'nd', client: '', status: 'active', value: 0, note: 'Nail the one-liner, the deliverable and the price before scaling outreach.' },
-    { id: uid(), name: 'Pet care — first 5 recurring clients', biz: 'pet', client: '', status: 'active', value: 0, note: 'Neighbourhood first. Recurring beats one-off every time.' },
+    { id: uid(), name: 'Lock in pricing — build + retainer', biz: 'nd', client: '', status: 'active', value: 0,
+      note: 'You cannot hit $10k/month without knowing what one sale is worth. Set both numbers in Offers & pricing.' },
+    { id: uid(), name: 'PureWash Pro — marketing system', biz: 'pw', client: 'PureWash Pro', status: 'active', value: 0,
+      note: "Dad's business is your proof of concept. Whatever works here becomes the Nick Digital case study." },
   ];
   if (!DB.ideas.length) DB.ideas = [
-    { id: uid(), t: 'Content series documenting the build', note: 'Rowan proved the audience exists. Show the work, not the theory.', impact: 4, ease: 4, ts: today() },
+    { id: uid(), t: 'Productise the automation retainer', note: 'Retainers are the only path to a $10k floor — one-off builds reset to zero every month.', impact: 5, ease: 3, ts: today() },
+    { id: uid(), t: 'Content series documenting the build', note: 'Show the work, not the theory. The dashboard itself is content.', impact: 4, ease: 4, ts: today() },
   ];
 }
 
