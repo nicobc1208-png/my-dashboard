@@ -1198,7 +1198,7 @@ RENDERERS.home = function () {
       <button class="btn btn-sm" onclick="exportData()">Export</button>
       <button class="btn btn-sm" onclick="importData()">Import</button>
     </div>
-    <div class="li-s tc" style="margin-top:14px;white-space:normal">Nick OS · ${syncOn()
+    <div class="li-s tc" style="margin-top:14px;white-space:normal">Nick OS ${BUILD} · ${syncOn()
       ? 'end-to-end encrypted sync is on — open this URL on any device and sign in with your sync ID'
       : 'data lives on this device only. Set up sync to reach it from anywhere.'}</div>
   </div>`;
@@ -3475,6 +3475,7 @@ function copyText(t) { navigator.clipboard.writeText(t).then(() => toast('Copied
    HEVY — pull real workouts instead of typing them
    Key lives in localStorage on this device only. Never committed.
    ═══════════════════════════════════════════════════════════════════ */
+const BUILD = '2026.08.03-6';
 const HEVY_KEY = 'nick_os_hevy_key';
 const hevyKey = () => localStorage.getItem(HEVY_KEY) || '';
 const KG_TO_LB = 2.20462;
@@ -3493,7 +3494,7 @@ function hevyImportNow() {
   let inp = $('hevyFileGlobal');
   if (!inp) {
     inp = document.createElement('input');
-    inp.type = 'file'; inp.accept = '.csv,text/csv,text/plain';
+    inp.type = 'file';   /* no accept filter — iOS hides files it doesn't recognise */
     inp.id = 'hevyFileGlobal'; inp.className = 'hidden';
     document.body.appendChild(inp);
   }
@@ -3505,6 +3506,12 @@ function hevyImportNow() {
   inp.click();
 }
 
+function hevyPasteImport() {
+  const t = ($('hvPaste') ? $('hvPaste').value : '').trim();
+  const out = m => { const el = $('hvCsvOut'); if (el) el.innerHTML = m; toast(String(m).replace(/<[^>]+>/g, '').trim()); };
+  if (!t) { out('<span style="color:var(--danger)">Nothing pasted.</span>'); return; }
+  hevyParseText(t, out);
+}
 function hevySheet() {
   const n = DB.workouts.filter(w => w.hv).length;
   const at = localStorage.getItem('nick_os_hevy_at');
@@ -3518,6 +3525,15 @@ function hevySheet() {
     </div>
     <button class="btn btn-accent btn-block" style="--_c:var(--fit)" onclick="hevyImportNow()">Choose Hevy export file</button>
     <div id="hvCsvOut" class="li-s mt mb" style="white-space:normal;min-height:18px;line-height:1.6"></div>
+
+    <div class="sect">${sectionHead('Or paste it')}
+      <div class="card pad-sm">
+        <div class="li-s mb" style="white-space:normal;line-height:1.6">If the file picker will not cooperate,
+          open the export in any app, select all, copy, and paste it here.</div>
+        <textarea id="hvPaste" placeholder="title,start_time,exercise_title,…" style="min-height:90px;font-family:var(--mono);font-size:11px"></textarea>
+        <button class="btn btn-block mt" onclick="hevyPasteImport()">Import pasted text</button>
+      </div>
+    </div>
 
     <div class="sect" style="margin-top:20px">${sectionHead('Why not automatic?')}
       <div class="card pad-sm">
@@ -3656,17 +3672,72 @@ function parseCSV(text) {
   if (cell || row.length) { row.push(cell); rows.push(row); }
   return rows.filter(r => r.length > 1);
 }
-function hevyImportCSV(file) {
+/* Hevy's export is frequently a .zip, and iOS may hand over a file with no
+   useful name or type. Sniff the bytes rather than trusting either. */
+async function hevyImportCSV(file) {
   const out = m => {
     const el = $('hvCsvOut');
     if (el) el.innerHTML = m;
     toast(String(m).replace(/<[^>]+>/g, '').trim());
   };
-  out('Reading…');
-  const rd = new FileReader();
-  rd.onload = ev => {
-    try {
-      const rows = parseCSV(String(ev.target.result));
+  try {
+    const buf = await file.arrayBuffer();
+    const head = new Uint8Array(buf.slice(0, 4));
+    let text;
+    if (head[0] === 0x50 && head[1] === 0x4B) {                 // "PK" -> zip
+      out('Unzipping…');
+      text = await csvFromZip(buf);
+      if (!text) { out('<span style="color:var(--danger)">That zip has no CSV inside it.</span>'); return; }
+    } else {
+      text = new TextDecoder().decode(buf);
+    }
+    if (/^\s*[[{]/.test(text)) { out('<span style="color:var(--danger)">That looks like a JSON file. Export <b>Workout Data</b> from Hevy, which is CSV.</span>'); return; }
+    if (/^\s*<!doctype|^\s*<html/i.test(text)) { out('<span style="color:var(--danger)">That is a web page, not the export file.</span>'); return; }
+    hevyParseText(text, out);
+  } catch (e) {
+    out('<span style="color:var(--danger)">Could not read that file: ' + esc(e.message) + '</span>');
+  }
+}
+
+/* minimal zip reader: stored + deflate entries, first .csv wins */
+async function csvFromZip(buf) {
+  const dv = new DataView(buf), u8 = new Uint8Array(buf);
+  let eocd = -1;
+  for (let i = u8.length - 22; i >= 0 && i > u8.length - 66000; i--) {
+    if (dv.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+  }
+  if (eocd < 0) throw new Error('not a readable zip');
+  const count = dv.getUint16(eocd + 10, true);
+  let off = dv.getUint32(eocd + 16, true);
+  const entries = [];
+  for (let i = 0; i < count; i++) {
+    if (dv.getUint32(off, true) !== 0x02014b50) break;
+    const method = dv.getUint16(off + 10, true);
+    const csize = dv.getUint32(off + 20, true);
+    const nlen = dv.getUint16(off + 28, true);
+    const mlen = dv.getUint16(off + 30, true);
+    const klen = dv.getUint16(off + 32, true);
+    const lho = dv.getUint32(off + 42, true);
+    const name = new TextDecoder().decode(u8.slice(off + 46, off + 46 + nlen));
+    entries.push({ name, method, csize, lho });
+    off += 46 + nlen + mlen + klen;
+  }
+  const pick = entries.find(e => /\.csv$/i.test(e.name)) || entries.find(e => !/\/$/.test(e.name));
+  if (!pick) return null;
+  const ln = dv.getUint16(pick.lho + 26, true), lx = dv.getUint16(pick.lho + 28, true);
+  const start = pick.lho + 30 + ln + lx;
+  const raw = u8.slice(start, start + pick.csize);
+  if (pick.method === 0) return new TextDecoder().decode(raw);
+  if (typeof DecompressionStream === 'undefined') throw new Error('this browser cannot unzip — export as CSV instead');
+  const ds = new DecompressionStream('deflate-raw');
+  const stream = new Blob([raw]).stream().pipeThrough(ds);
+  return await new Response(stream).text();
+}
+
+function hevyParseText(text, out) {
+  try {
+    {
+      const rows = parseCSV(String(text));
       if (rows.length < 2) { out('<span style="color:var(--danger)">That file looks empty.</span>'); return; }
       const head = rows[0].map(h => h.trim().toLowerCase().replace(/^"|"$/g, ''));
       const col = (...names) => { for (const n of names) { const i = head.indexOf(n); if (i >= 0) return i; } return -1; };
@@ -3707,12 +3778,10 @@ function hevyImportCSV(file) {
         ? `<span style="color:var(--fit)"><b>Imported ${added} workout${added === 1 ? '' : 's'}</b>` +
           `${prs ? ` · ${prs} PRs detected` : ''} from ${list.length} found in the file.</span>`
         : `<span style="color:var(--warning)">Found ${list.length} workouts — all of them were already imported.</span>`);
-    } catch (e) {
-      out('<span style="color:var(--danger)">Could not read that file: ' + esc(e.message) + '</span>');
     }
-  };
-  rd.onerror = () => out('<span style="color:var(--danger)">Could not open the file.</span>');
-  rd.readAsText(file);
+  } catch (e) {
+    out('<span style="color:var(--danger)">Could not parse it: ' + esc(e.message) + '</span>');
+  }
 }
 /* Hevy exports have used several date formats over the years */
 function parseHevyDate(s) {
