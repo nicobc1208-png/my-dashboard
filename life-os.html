@@ -504,6 +504,7 @@ const DEFAULTS = () => ({
   bulk: { goalWeight: 132, rateMin: 0.25, rateMax: 0.5 },
   split: { name: 'ULPPL', cycle: ['Upper', 'Lower', 'Push', 'Pull', 'Legs', 'Rest'], target: 6 },
   foods: [],                 // saved foods for one-tap reuse
+  health: {},                // date -> {steps,rhr,hrv,sleep,spo2}  (Fitbit Air, read off Google Health)
 
   /* business */
   leads: [],                 // [{id,name,company,phone,email,src,stage,value,note,next,biz,ts}]
@@ -923,6 +924,9 @@ function scores(d = today()) {
     pct(nt.kcal, DB.nutTarget.kcal),                     // bulking: eating enough IS the work
     pct(nd.water, DB.nutTarget.water),
     DB.weights.some(w => wk.includes(w.date)) ? 100 : 0,
+    ...(wk.some(k => (DB.health[k] || {}).sleep != null)
+      ? [pct(avg(wk.map(k => (DB.health[k] || {}).sleep).filter(v => v != null)), 8)]
+      : []),                                   // only counts once he tracks it
   ]);
 
   /* ── WORK: dials, pipeline hygiene, revenue vs monthly goal ── */
@@ -1371,6 +1375,42 @@ const MILK = {
   skim:   { kcal: 83,  p: 8.3, c: 12.2, f: 0.2, label: 'Skim milk' },
 };
 
+/* ── recovery ─────────────────────────────────────────────────
+   The Fitbit Air is screenless: the numbers live in the Google Health
+   app. There is no API a personal page can use (Google Health scopes
+   are Restricted), so these are typed in — four numbers, ten seconds. */
+const HEALTH_FIELDS = [
+  ['sleep', 'Sleep', 'h',    'var(--school)', 8],
+  ['rhr',   'Resting HR', 'bpm', 'var(--music)', 60],
+  ['steps', 'Steps', '',     'var(--fit)',    10000],
+  ['hrv',   'HRV', 'ms',     'var(--money)',  50],
+];
+const healthDay = (d = today()) => DB.health[d] || {};
+const hasHealth = () => lastN(14).some(d => Object.keys(healthDay(d)).length);
+function logHealth() {
+  const h = healthDay();
+  formSheet('Log recovery', [
+    { k: 'sleep', l: 'Sleep (hours)', type: 'number', step: '0.1', v: h.sleep },
+    { k: 'rhr', l: 'Resting heart rate (bpm)', type: 'number', v: h.rhr },
+    { k: 'hrv', l: 'HRV (ms)', type: 'number', v: h.hrv },
+    { k: 'steps', l: 'Steps', type: 'number', v: h.steps },
+    { k: 'date', l: 'Date', type: 'date', v: today() },
+  ], o => {
+    const d = o.date || today();
+    const rec = { ...DB.health[d] };
+    ['sleep', 'rhr', 'hrv', 'steps'].forEach(k => { if (o[k] != null && o[k] !== '') rec[k] = o[k]; });
+    DB.health[d] = rec; logScore(); save(); toast('Logged');
+  }, `<div class="card mb pad-sm"><div class="li-s" style="white-space:normal;line-height:1.6">
+        Open Google Health, read the numbers off today's summary, type them here.
+        Leave anything blank that you do not care about.</div></div>`);
+}
+/* sleep debt against 8h, over the last week */
+function sleepDebt() {
+  const wk = weekDates().filter(d => healthDay(d).sleep != null);
+  if (!wk.length) return null;
+  return round(sum(wk.map(d => 8 - healthDay(d).sleep)), 1);
+}
+
 RENDERERS.fitness = function () {
   const sub = DB.ui.sub.fitness || 'train';
   const s = scores();
@@ -1569,6 +1609,45 @@ function fitBody() {
   <div class="sect">${sectionHead('Trend · 90 days')}
     <div class="card">${lineChart(ws.filter(w => daysBetween(w.date, today()) <= 90).map(w => ({ date: w.date, val: w.w })),
       { color: 'var(--fit)', h: 140, fmt: v => round(v, 1) })}</div>
+  </div>
+
+  <div class="sect">${sectionHead('Recovery', ['+ Log', 'logHealth()'])}
+    ${hasHealth() ? `
+      <div class="grid g2 mb">
+        ${HEALTH_FIELDS.map(([k, lbl, unit, color, target]) => {
+          const vals = lastN(7).map(d => healthDay(d)[k]).filter(v => v != null);
+          const cur = (() => { for (const d of lastN(7).slice().reverse()) if (healthDay(d)[k] != null) return healthDay(d)[k]; return null; })();
+          const av = vals.length ? round(avg(vals), k === 'steps' ? 0 : 1) : null;
+          return `<div class="tile" style="--_c:${color}" onclick="logHealth()">
+            <div class="tile-v">${cur != null ? (k === 'steps' ? Math.round(cur).toLocaleString() : cur) : '—'}<small style="font-size:12px;color:var(--text-3)">${unit}</small></div>
+            <div class="tile-l">${lbl}</div>
+            <div class="tile-s">${av != null ? '7-day avg ' + (k === 'steps' ? Math.round(av).toLocaleString() : av) : 'not logged'}</div>
+          </div>`;
+        }).join('')}
+      </div>
+      ${(() => { const dbt = sleepDebt();
+        return dbt == null ? '' : `<div class="card mb" style="--_c:${dbt > 7 ? 'var(--danger)' : dbt > 3 ? 'var(--warning)' : 'var(--fit)'}">
+          <div class="eyebrow">Sleep debt</div>
+          <div class="row" style="align-items:baseline;gap:9px;margin-top:5px">
+            <div class="big sm">${dbt > 0 ? dbt : 0}<small> h</small></div>
+            <div class="sub muted">behind 8h/night this week</div></div>
+          <div class="li-s" style="white-space:normal;margin-top:7px">${
+            dbt > 7 ? 'That is enough to blunt recovery and appetite — the two things a bulk runs on.'
+            : dbt > 3 ? 'Manageable, but it compounds. An earlier night this week pays for itself.'
+            : 'Well rested. This is the cheapest performance edge you have.'}</div>
+        </div>`; })()}
+      ${(() => { const pts = lastN(30).filter(d => healthDay(d).sleep != null).map(d => ({ date: d, val: healthDay(d).sleep }));
+        return pts.length > 1 ? `<div class="card mb"><div class="eyebrow mb">Sleep · 30 days</div>
+          ${lineChart(pts, { color: 'var(--school)', h: 120, fmt: v => round(v, 1) + 'h' })}</div>` : ''; })()}
+      ${(() => { const pts = lastN(30).filter(d => healthDay(d).rhr != null).map(d => ({ date: d, val: healthDay(d).rhr }));
+        return pts.length > 1 ? `<div class="card mb"><div class="eyebrow mb">Resting heart rate · 30 days</div>
+          ${lineChart(pts, { color: 'var(--music)', h: 120, fmt: v => round(v) })}
+          <div class="li-s tc mt-sm" style="white-space:normal">A resting HR drifting up while training hard usually means under-recovery.</div></div>` : ''; })()}`
+    : `<div class="card"><div class="empty">Nothing logged yet.<br><br>
+        The Fitbit Air has no screen and no API a personal page can use, so read
+        sleep, resting HR and steps off Google Health and tap them in.<br>
+        Ten seconds, and it makes the bulk data far more useful.
+        <br><br><button class="btn btn-accent" style="--_c:var(--fit)" onclick="logHealth()">Log today</button></div></div>`}
   </div>
 
   <div class="sect">${sectionHead('Weigh-in log')}
@@ -3475,7 +3554,7 @@ function copyText(t) { navigator.clipboard.writeText(t).then(() => toast('Copied
    HEVY — pull real workouts instead of typing them
    Key lives in localStorage on this device only. Never committed.
    ═══════════════════════════════════════════════════════════════════ */
-const BUILD = '2026.08.03-6';
+const BUILD = '2026.08.03-7';
 const HEVY_KEY = 'nick_os_hevy_key';
 const hevyKey = () => localStorage.getItem(HEVY_KEY) || '';
 const KG_TO_LB = 2.20462;
