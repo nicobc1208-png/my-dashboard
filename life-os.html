@@ -1669,9 +1669,8 @@ function fitBody() {
           ${lineChart(pts, { color: 'var(--music)', h: 120, fmt: v => round(v) })}
           <div class="li-s tc mt-sm" style="white-space:normal">A resting HR drifting up while training hard usually means under-recovery.</div></div>` : ''; })()}`
     : `<div class="card"><div class="empty">Nothing logged yet.<br><br>
-        The Fitbit Air has no screen and no API a personal page can use, so read
-        sleep, resting HR and steps off Google Health and tap them in.<br>
-        Ten seconds, and it makes the bulk data far more useful.
+        Import from Apple Health, or tap the numbers in from Google Health.<br>
+        Either way it takes seconds, and it makes the bulk data far more useful.
         </div></div>`}
   </div>
 
@@ -3580,7 +3579,7 @@ function copyText(t) { navigator.clipboard.writeText(t).then(() => toast('Copied
    HEVY — pull real workouts instead of typing them
    Key lives in localStorage on this device only. Never committed.
    ═══════════════════════════════════════════════════════════════════ */
-const BUILD = '2026.08.05-12';
+const BUILD = '2026.08.05-13';
 const HEVY_KEY = 'nick_os_hevy_key';
 const hevyKey = () => localStorage.getItem(HEVY_KEY) || '';
 const KG_TO_LB = 2.20462;
@@ -4749,17 +4748,30 @@ async function ahImport(file) {
 function healthImportSheet() {
   sheet('Import health data', `
     <div class="card mb pad-sm" style="--_c:var(--fit)">
-      <div class="sub" style="line-height:1.65">Your Fitbit Air, Bevel and anything else all write into
-        <b>Apple Health</b>. There is no API a personal page can use, but the Health export contains everything —
-        steps, sleep, resting heart rate, HRV and weight.</div>
+      <div class="sub" style="line-height:1.65">Neither Fitbit Air nor Bevel exposes an API a personal page can use.
+        Both write into <b>Apple Health</b> though, so that export is the way in — steps, sleep,
+        resting heart rate and weight.</div>
     </div>
-    <div class="card mb pad-sm">
-      <div class="eyebrow mb">On your iPhone</div>
+
+    <div class="card mb pad-sm" style="--_c:var(--biz)">
+      <div class="eyebrow mb">Step 1 · point Fitbit at Apple Health</div>
       <div class="li-s" style="white-space:normal;line-height:1.7">
-        1. Open <b>Health</b><br>
-        2. Tap your <b>profile picture</b>, top right<br>
-        3. Scroll down → <b>Export All Health Data</b><br>
-        4. Save the zip, then load it below
+        Google Health added this on 2 Aug 2026 — before that it could only read.<br><br>
+        Open <b>Google Health</b> → profile icon, top right → <b>Partner apps</b> → <b>Apple Health</b> →
+        allow everything.<br>
+        Already had the old one-way sync? Tap <b>Review permissions</b> to widen it.
+      </div>
+      <div class="li-s" style="white-space:normal;margin-top:9px;color:var(--warning)">
+        HRV, Cardio Load and Readiness stay inside Google Health — Apple Health has no equivalent.
+        Bevel fills HRV in if you have it, otherwise tap it in by hand.
+      </div>
+    </div>
+
+    <div class="card mb pad-sm">
+      <div class="eyebrow mb">Step 2 · export and load it here</div>
+      <div class="li-s" style="white-space:normal;line-height:1.7">
+        Open <b>Health</b> → <b>profile picture</b>, top right → scroll down →
+        <b>Export All Health Data</b> → save the zip, then load it below.
       </div>
     </div>
     <button class="btn btn-accent btn-block" style="--_c:var(--fit)" onclick="ahImportNow()">Choose Health export</button>
