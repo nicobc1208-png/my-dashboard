@@ -3576,7 +3576,7 @@ function copyText(t) { navigator.clipboard.writeText(t).then(() => toast('Copied
    HEVY — pull real workouts instead of typing them
    Key lives in localStorage on this device only. Never committed.
    ═══════════════════════════════════════════════════════════════════ */
-const BUILD = '2026.08.03-9';
+const BUILD = '2026.08.05-10';
 const HEVY_KEY = 'nick_os_hevy_key';
 const hevyKey = () => localStorage.getItem(HEVY_KEY) || '';
 const KG_TO_LB = 2.20462;
@@ -4590,6 +4590,34 @@ function heroHomeCard() {
 /* ── modal plumbing ──────────────────────────────────────────── */
 $('modalBg').addEventListener('click', e => { if (e.target === $('modalBg')) closeSheet(); });
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeSheet(); });
+
+/* ── self-update ──────────────────────────────────────────────
+   The 75 Hard service worker registered at /my-dashboard/ caches every
+   page under that scope, this one included, which can pin the browser
+   to an old build. Evict this page from those caches, then compare the
+   deployed BUILD against the running one and reload once if they
+   differ. Guarded by sessionStorage so it can never loop. */
+(async function selfUpdate() {
+  try {
+    if ('caches' in window) {
+      const keys = await caches.keys();
+      await Promise.all(keys.map(async k => {
+        const c = await caches.open(k);
+        await c.delete(location.pathname);
+        await c.delete(location.href);
+        await c.delete(location.origin + location.pathname);
+      }));
+    }
+    const r = await fetch(location.pathname + '?_=' + Date.now(), { cache: 'reload' });
+    if (!r.ok) return;
+    const m = (await r.text()).match(/const BUILD = '([^']+)'/);
+    if (!m || m[1] === BUILD) return;
+    const flag = 'nos_upd_' + m[1];
+    if (sessionStorage.getItem(flag)) return;      // already tried for this build
+    sessionStorage.setItem(flag, '1');
+    location.reload();
+  } catch (e) { /* offline is fine — the cached copy still works */ }
+})();
 
 /* ── boot ─────────────────────────────────────────────────────── */
 (function boot() {
