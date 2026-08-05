@@ -506,6 +506,14 @@ const DEFAULTS = () => ({
   foods: [],                 // saved foods for one-tap reuse
   health: {},                // date -> {steps,rhr,hrv,sleep,spo2}  (Fitbit Air, read off Google Health)
 
+  /* hero protocol */
+  hero: {
+    log: {},                 // date -> {trained,mobility,hard,learned,helped,honest,outreach,build}
+    weekly: {},              // isoWeek -> {selfdef,pressure,alone,moved}
+    cert: 0,                 // first aid / CPR, one-time %
+    milestones: [],          // toward first client
+  },
+
   /* business */
   leads: [],                 // [{id,name,company,phone,email,src,stage,value,note,next,biz,ts}]
   calls: {},                 // date -> {dials,conn,booked}
@@ -571,11 +579,20 @@ function deepMerge(base, over) {
   for (const k in over) out[k] = (k in base) ? deepMerge(base[k], over[k]) : over[k];
   return out;
 }
+function writeNow() {
+  clearTimeout(_saveT);
+  try { localStorage.setItem(KEY, JSON.stringify(DB)); return true; }
+  catch (e) { return false; }
+}
+/* iOS kills backgrounded web apps without warning, so never leave a
+   debounced write in flight when the page goes away. */
+addEventListener('pagehide', writeNow);
+addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') writeNow(); });
+
 function save(rerender = true) {
   clearTimeout(_saveT);
   _saveT = setTimeout(() => {
-    try { localStorage.setItem(KEY, JSON.stringify(DB)); }
-    catch (e) { toast('Storage full — export & prune photos'); }
+    if (!writeNow()) toast('Storage full — export & prune photos');
   }, 120);
   syncQueue();                 // encrypted push, debounced
   if (rerender) render();
@@ -1172,6 +1189,10 @@ RENDERERS.home = function () {
 
   <div class="sect">${sectionHead('Today', ['+ Task', 'addTask()'])}
     <div class="card">${tasksHTML}</div>
+  </div>
+
+  <div class="sect">${sectionHead('Hero Protocol', ['Open', "go('life','hero')"])}
+    ${heroHomeCard()}
   </div>
 
   <div class="sect">${sectionHead('Habits', ['Manage', 'manageHabits()'])}
@@ -2795,11 +2816,12 @@ RENDERERS.life = function () {
   const sub = DB.ui.sub.life || 'school';
   const s = scores();
   const meta = { school: ['School', 'var(--school)', s.school], music: ['Music', 'var(--music)', s.music],
-                 growth: ['Growth', 'var(--growth)', s.growth] }[sub] || ['School', 'var(--school)', s.school];
+                 growth: ['Growth', 'var(--growth)', s.growth],
+                 hero: ['Hero Protocol', 'var(--growth)', s.growth] }[sub] || ['School', 'var(--school)', s.school];
   const head = pageHead(meta[0], `Life score contribution · ${meta[2]}/100`,
     ring(meta[2], { size: 52, sw: 5, color: meta[1], val: meta[2], vs: 15 }));
-  const nav = segNav('life', [['school', 'School'], ['music', 'Music'], ['growth', 'Growth']], sub);
-  return head + nav + ({ school: lfSchool, music: lfMusic, growth: lfGrowth }[sub] || lfSchool)();
+  const nav = segNav('life', [['school', 'School'], ['music', 'Music'], ['growth', 'Growth'], ['hero', 'Hero']], sub);
+  return head + nav + ({ school: lfSchool, music: lfMusic, growth: lfGrowth, hero: lfHero }[sub] || lfSchool)();
 };
 
 /* ── SCHOOL ───────────────────────────────────────────────────── */
@@ -3554,7 +3576,7 @@ function copyText(t) { navigator.clipboard.writeText(t).then(() => toast('Copied
    HEVY — pull real workouts instead of typing them
    Key lives in localStorage on this device only. Never committed.
    ═══════════════════════════════════════════════════════════════════ */
-const BUILD = '2026.08.03-7';
+const BUILD = '2026.08.03-9';
 const HEVY_KEY = 'nick_os_hevy_key';
 const hevyKey = () => localStorage.getItem(HEVY_KEY) || '';
 const KG_TO_LB = 2.20462;
@@ -4261,11 +4283,309 @@ function seedIfEmpty() {
     { id: uid(), name: 'PureWash Pro — marketing system', biz: 'pw', client: 'PureWash Pro', status: 'active', value: 0,
       note: "Dad's business is your proof of concept. Whatever works here becomes the Nick Digital case study." },
   ];
+  if (!DB.hero.milestones.length) DB.hero.milestones = [
+    { id: uid(), t: 'Offer and price written down', done: false },
+    { id: uid(), t: 'One proof piece built (site or automation)', done: false },
+    { id: uid(), t: '50 outreach actions logged', done: false },
+    { id: uid(), t: 'First discovery call booked', done: false },
+    { id: uid(), t: 'First proposal sent', done: false },
+    { id: uid(), t: 'First client signed', done: false },
+  ];
   if (!DB.ideas.length) DB.ideas = [
     { id: uid(), t: 'Productise the automation retainer', note: 'Retainers are the only path to a $10k floor — one-off builds reset to zero every month.', impact: 5, ease: 3, ts: today() },
     { id: uid(), t: 'Content series documenting the build', note: 'Show the work, not the theory. The dashboard itself is content.', impact: 4, ease: 4, ts: today() },
   ];
 }
+
+/* ═══════════════════════════════════════════════════════════════════
+   HERO PROTOCOL — physical · mental · emotional · the mask
+   Four pillars. A day counts when 3 of 4 have any activity, so an
+   ordinary day still counts. Nothing here scolds.
+   ═══════════════════════════════════════════════════════════════════ */
+const HERO_PILLARS = [
+  { id: 'phys',  label: 'Physical',     color: 'var(--fit)' },
+  { id: 'ment',  label: 'Mental',       color: 'var(--stats)' },
+  { id: 'emot',  label: 'Emotional',    color: 'var(--music)' },
+  { id: 'work',  label: 'Nick Digital', color: 'var(--biz)' },
+];
+const heroDay = (d = today()) => DB.hero.log[d] || {};
+function heroSet(k, v, d = today()) {
+  const rec = { ...heroDay(d) };
+  if (v === '' || v == null || v === false) delete rec[k]; else rec[k] = v;
+  DB.hero.log[d] = rec;
+  logScore(); save();
+}
+function heroToggle(k) { heroSet(k, !heroDay()[k]); haptic(); }
+
+/* which pillars showed up on a given day */
+function heroPillars(d = today()) {
+  const h = heroDay(d);
+  return {
+    phys: !!(h.trained || h.mobility),
+    ment: !!(h.hard || (h.learned && h.learned.trim())),
+    emot: !!((h.helped && h.helped.trim()) || h.honest),
+    work: !!((h.outreach > 0) || (h.build && h.build.trim())),
+  };
+}
+const heroCount = (d = today()) => Object.values(heroPillars(d)).filter(Boolean).length;
+/* 3 of 4 — deliberately not 4 of 4 */
+const HERO_BAR = 3;
+const heroDayCounts = d => heroCount(d) >= HERO_BAR;
+const heroStreak = () => streakOf(heroDayCounts);
+
+const heroWeek = (wk = isoWeek(today())) => DB.hero.weekly[wk] || {};
+function heroWeekSet(k, v, wk = isoWeek(today())) {
+  const rec = { ...heroWeek(wk) };
+  if (v === '' || v == null || v === false) delete rec[k]; else rec[k] = v;
+  DB.hero.weekly[wk] = rec; save();
+}
+
+/* ── the panel ────────────────────────────────────────────────── */
+function lfHero() {
+  const d = today(), h = heroDay(), P = heroPillars(), n = heroCount();
+  const streak = heroStreak();
+  const wkKey = isoWeek(d), w = heroWeek();
+  const days = weekDates();
+
+  /* a checkable row */
+  const check = (k, label, sub, color) => `
+    <div class="li">
+      <button class="ck ${h[k] ? 'on' : ''}" style="--_c:${color}" onclick="heroToggle('${k}')"></button>
+      <div class="li-main"><div class="li-t" style="${h[k] ? 'color:' + color : ''}">${esc(label)}</div>
+        ${sub ? `<div class="li-s" style="white-space:normal">${esc(sub)}</div>` : ''}</div>
+    </div>`;
+  /* a text-log row — having written anything is the completion */
+  const logRow = (k, label, ph, color) => {
+    const v = (h[k] || '').trim();
+    return `<div class="li" onclick="heroLog('${k}','${esc(label).replace(/'/g, '&#39;')}','${esc(ph).replace(/'/g, '&#39;')}')" style="cursor:pointer">
+      <button class="ck ${v ? 'on' : ''}" style="--_c:${color}" onclick="event.stopPropagation();heroLog('${k}','${esc(label).replace(/'/g, '&#39;')}','${esc(ph).replace(/'/g, '&#39;')}')"></button>
+      <div class="li-main"><div class="li-t" style="${v ? 'color:' + color : ''}">${esc(label)}</div>
+        <div class="li-s" style="white-space:normal">${v ? esc(v) : esc(ph)}</div></div>
+    </div>`;
+  };
+
+  const pillarHead = (p, label, note) => `
+    <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:9px">
+      <div class="row" style="gap:8px">
+        <span style="width:6px;height:6px;border-radius:50%;background:${p.color};
+          box-shadow:0 0 8px ${p.color};display:inline-block"></span>
+        <div class="card-t">${esc(label)}</div>
+      </div>
+      <span class="pill" style="--_c:${P[p.id] ? p.color : 'var(--text-4)'}">${P[p.id] ? 'logged' : 'open'}</span>
+    </div>
+    ${note ? `<div class="li-s" style="white-space:normal;margin:-4px 0 8px">${esc(note)}</div>` : ''}`;
+
+  const ms = DB.hero.milestones || [];
+  const msDone = ms.filter(m => m.done).length;
+
+  return `
+  <div class="focus mb" style="--_c:var(--growth)">
+    <div class="focus-l">Hero Protocol</div>
+    <div class="focus-t">${n}/4 pillars today</div>
+    <div class="focus-s">${n >= HERO_BAR
+      ? 'Today counts.' + (streak > 1 ? ` ${streak} days running.` : '')
+      : `Any ${HERO_BAR} of the four makes the day count.`}</div>
+    <div class="row mt" style="gap:7px;position:relative">
+      ${HERO_PILLARS.map(p => `<div class="bar grow" style="--_c:${p.color}">
+        <span style="width:${P[p.id] ? 100 : 0}%"></span></div>`).join('')}
+    </div>
+  </div>
+
+  <div class="grid g2 mb">
+    <div class="tile" style="--_c:var(--growth)" onclick="setSub('life','hero')">
+      <span class="tile-i">🔥</span>
+      <div class="tile-v">${streak}</div>
+      <div class="tile-l">Day streak</div>
+      <div class="tile-s">${HERO_BAR}+ pillars a day</div>
+    </div>
+    <div class="tile" style="--_c:var(--stats)">
+      <span class="tile-i">📅</span>
+      <div class="tile-v">${days.filter(heroDayCounts).length}<small style="font-size:13px;color:var(--text-3)">/7</small></div>
+      <div class="tile-l">This week</div>
+      <div class="tile-s">days that counted</div>
+    </div>
+  </div>
+
+  <div class="card mb">${pillarHead(HERO_PILLARS[0], 'Physical')}
+    ${check('trained', 'Trained today', 'Strength, calisthenics or cardio', 'var(--fit)')}
+    ${check('mobility', 'Mobility work', 'Ten minutes counts', 'var(--fit)')}
+    ${h.trained ? logRow('trainedNote', 'Session note', 'What did you do?', 'var(--fit)') : ''}
+  </div>
+
+  <div class="card mb">${pillarHead(HERO_PILLARS[1], 'Mental')}
+    ${check('hard', 'Did the thing I was avoiding', 'The rep that only counts because it was uncomfortable', 'var(--stats)')}
+    ${logRow('learned', 'Learned something', 'One line is enough', 'var(--stats)')}
+  </div>
+
+  <div class="card mb">${pillarHead(HERO_PILLARS[2], 'Emotional')}
+    ${logRow('helped', 'Helped someone', 'Who, and what — nothing expected back', 'var(--music)')}
+    ${check('honest', 'Was honest with someone about how I am doing', 'Hardest one. No pressure — just noting it when it happens.', 'var(--music)')}
+  </div>
+
+  <div class="card mb">${pillarHead(HERO_PILLARS[3], 'Nick Digital')}
+    <div class="li">
+      <div class="li-main"><div class="li-t">Outreach actions</div>
+        <div class="li-s">Calls, texts, DMs sent</div></div>
+      <div class="row" style="gap:6px;flex:0 0 auto">
+        <button class="btn btn-sm" onclick="heroOutreach(-1)">−</button>
+        <div class="num" style="min-width:26px;text-align:center;font-weight:700;font-size:16px;
+          color:${h.outreach ? 'var(--biz)' : 'var(--text-3)'}">${h.outreach || 0}</div>
+        <button class="btn btn-sm" onclick="heroOutreach(1)">+</button>
+      </div>
+    </div>
+    ${logRow('build', 'Built something', 'What moved forward today?', 'var(--biz)')}
+  </div>
+
+  <div class="sect">${sectionHead('This week')}
+    <div class="card">
+      <div class="li">
+        <button class="ck ${w.selfdef ? 'on' : ''}" style="--_c:var(--fit)"
+          onclick="heroWeekSet('selfdef', !heroWeek().selfdef); render()"></button>
+        <div class="li-main"><div class="li-t">Self-defense session</div>
+          <div class="li-s">Once a week</div></div>
+      </div>
+      <div style="padding:13px 2px 4px">
+        <div class="row" style="justify-content:space-between;margin-bottom:7px">
+          <div class="li-t">First aid / CPR certification</div>
+          <div class="num fs12 muted">${DB.hero.cert || 0}%</div>
+        </div>
+        <div class="bar" style="--_c:var(--fit)"><span style="width:${DB.hero.cert || 0}%"></span></div>
+        <div class="row mt-sm" style="gap:6px">
+          ${[0, 25, 50, 75, 100].map(v => `<button class="chip ${(DB.hero.cert || 0) === v ? 'on' : ''}"
+            style="--_c:var(--fit)" onclick="DB.hero.cert=${v};save()">${v === 100 ? 'Done' : v + '%'}</button>`).join('')}
+        </div>
+        <div class="li-s" style="white-space:normal;margin-top:8px">One-time goal, not a weekly rep.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="sect">${sectionHead('Sunday check-in · ' + wkKey)}
+    <div class="card">
+      ${heroPrompt('pressure', 'What problem did I solve under pressure this week?', 'var(--stats)')}
+      ${heroPrompt('alone', "Did I carry something alone that I could've shared?", 'var(--music)')}
+      ${heroPrompt('moved', 'What actually moved Nick Digital forward?', 'var(--biz)')}
+      <button class="btn btn-block mt" onclick="heroReview()">Open weekly review</button>
+    </div>
+  </div>
+
+  <div class="sect">${sectionHead('Milestones · first client', ['+ Step', 'heroMilestone()'])}
+    <div class="card">
+      <div class="row mb" style="gap:10px;align-items:center">
+        <div class="bar grow" style="--_c:var(--biz)"><span style="width:${pct(msDone, ms.length)}%"></span></div>
+        <div class="num fs12 muted">${msDone}/${ms.length}</div>
+      </div>
+      ${ms.map(m => `<div class="li">
+        <button class="ck ${m.done ? 'on' : ''}" style="--_c:var(--biz)" onclick="heroMsToggle('${m.id}')"></button>
+        <div class="li-main"><div class="li-t" style="${m.done ? 'color:var(--text-4);text-decoration:line-through' : ''}">${esc(m.t)}</div></div>
+        <button class="x" onclick="heroMsDel('${m.id}')">✕</button>
+      </div>`).join('')}
+    </div>
+  </div>
+
+  <div class="sect">${sectionHead('Last 10 weeks')}
+    <div class="card">
+      ${heatgrid(lastN(70), d => heroDayCounts(d) ? 4 : (heroCount(d) ? 2 : 0), 'var(--growth)')}
+      <div class="li-s tc mt-sm" style="white-space:normal">Solid = the day counted · faint = something logged</div>
+    </div>
+  </div>`;
+}
+
+function heroPrompt(k, question, color) {
+  const v = (heroWeek()[k] || '').trim();
+  return `<div style="padding:11px 2px;border-bottom:1px solid var(--line-soft);cursor:pointer"
+    onclick="heroWeekPrompt('${k}')">
+    <div class="row" style="gap:9px;align-items:flex-start">
+      <span style="width:5px;height:5px;border-radius:50%;background:${color};margin-top:6px;flex:0 0 auto;
+        opacity:${v ? 1 : .35}"></span>
+      <div class="grow">
+        <div class="li-t" style="white-space:normal;font-size:13px">${esc(question)}</div>
+        <div class="li-s" style="white-space:normal;margin-top:4px;${v ? 'color:var(--text-2)' : ''}">${v ? esc(v) : 'Tap to answer'}</div>
+      </div>
+    </div></div>`;
+}
+function heroWeekPrompt(k) {
+  const qs = {
+    pressure: 'What problem did I solve under pressure this week?',
+    alone: "Did I carry something alone that I could've shared?",
+    moved: 'What actually moved Nick Digital forward?',
+  };
+  formSheet(isoWeek(today()), [{ k: 'v', l: qs[k], type: 'textarea', v: heroWeek()[k] || '' }],
+    o => { heroWeekSet(k, o.v); render(); });
+}
+function heroLog(k, label, ph) {
+  formSheet(label, [{ k: 'v', l: label, type: 'textarea', v: heroDay()[k] || '', ph }],
+    o => heroSet(k, o.v));
+}
+function heroOutreach(n) {
+  heroSet('outreach', Math.max(0, (heroDay().outreach || 0) + n));
+  haptic();
+}
+function heroMsToggle(id) {
+  const m = DB.hero.milestones.find(x => x.id === id);
+  if (m) { m.done = !m.done; haptic(); if (m.done) toast('✅ ' + m.t); save(); }
+}
+function heroMsDel(id) { DB.hero.milestones = DB.hero.milestones.filter(m => m.id !== id); save(); }
+function heroMilestone() {
+  formSheet('New milestone', [{ k: 't', l: 'Step toward first client' }],
+    o => { if (o.t) { DB.hero.milestones.push({ id: uid(), t: o.t, done: false }); save(); } });
+}
+
+/* ── weekly rollup — a 2 minute read, not a journal ───────────── */
+function heroReview(wk) {
+  const key = wk || isoWeek(today());
+  const days = weekDates().filter(d => isoWeek(d) === key);
+  const list = days.length ? days : weekDates();
+  const w = heroWeek(key);
+  const count = f => list.filter(f).length;
+  const rows = [
+    ['Days trained', count(d => heroDay(d).trained)],
+    ['Mobility days', count(d => heroDay(d).mobility)],
+    ['Hard thing done', count(d => heroDay(d).hard)],
+    ['Someone helped', count(d => (heroDay(d).helped || '').trim())],
+    ['Honest with someone', count(d => heroDay(d).honest)],
+    ['Outreach actions', sum(list.map(d => heroDay(d).outreach || 0))],
+    ['Build days', count(d => (heroDay(d).build || '').trim())],
+    ['Days that counted', count(heroDayCounts) + '/7'],
+  ];
+  const answers = [
+    ['Solved under pressure', w.pressure],
+    ['Carried alone', w.alone],
+    ['Moved the business', w.moved],
+  ].filter(a => (a[1] || '').trim());
+
+  sheet('Week ' + key, `
+    <div class="card mb">${rows.map(r =>
+      `<div class="kv"><span class="kv-k">${esc(r[0])}</span><span class="kv-v">${esc(String(r[1]))}</span></div>`).join('')}</div>
+    ${answers.length ? `<div class="card mb">${answers.map(a =>
+      `<div class="eyebrow mt">${esc(a[0])}</div>
+       <div class="sub" style="white-space:pre-wrap;margin-top:5px">${esc(a[1])}</div>`).join('')}</div>`
+      : `<div class="card mb"><div class="empty">No reflections written this week.<br>They take a minute, whenever you feel like it.</div></div>`}
+    ${w.selfdef ? `<div class="li-s tc mb">Self-defense session done ✅</div>` : ''}
+    <button class="btn btn-block" onclick="closeSheet()">Close</button>`);
+}
+
+/* ── compact card for Home ────────────────────────────────────── */
+function heroHomeCard() {
+  const P = heroPillars(), n = heroCount(), streak = heroStreak();
+  return `
+  <div class="card tap" style="--_c:var(--growth)" onclick="go('life','hero')">
+    <div class="card-h">
+      <div class="card-t">Hero Protocol</div>
+      <div class="row" style="gap:8px;flex:0 0 auto">
+        ${streak ? `<span class="pill" style="--_c:var(--growth)">🔥 ${streak}</span>` : ''}
+        <span class="num fs13 ${n >= HERO_BAR ? '' : 'muted'}"
+          style="${n >= HERO_BAR ? 'color:var(--growth);font-weight:700' : ''}">${n}/4</span>
+      </div>
+    </div>
+    <div class="row" style="gap:7px">
+      ${HERO_PILLARS.map(p => `<div class="bar grow" style="--_c:${p.color}">
+        <span style="width:${P[p.id] ? 100 : 0}%"></span></div>`).join('')}
+    </div>
+    <div class="li-s" style="margin-top:8px;white-space:normal">${
+      n >= HERO_BAR ? 'Today counts.' : HERO_PILLARS.filter(p => !P[p.id]).map(p => p.label).join(' · ') + ' still open'}</div>
+  </div>`;
+}
+
 
 /* ── modal plumbing ──────────────────────────────────────────── */
 $('modalBg').addEventListener('click', e => { if (e.target === $('modalBg')) closeSheet(); });
