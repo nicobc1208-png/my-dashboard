@@ -1632,7 +1632,11 @@ function fitBody() {
       { color: 'var(--fit)', h: 140, fmt: v => round(v, 1) })}</div>
   </div>
 
-  <div class="sect">${sectionHead('Recovery', ['+ Log', 'logHealth()'])}
+  <div class="sect">${sectionHead('Recovery', ['Import', 'healthImportSheet()'])}
+    <div class="row mb" style="gap:8px">
+      <button class="btn btn-accent grow" style="--_c:var(--fit)" onclick="logHealth()">+ Log today</button>
+      <button class="btn grow" onclick="healthImportSheet()">↓ Apple Health</button>
+    </div>
     ${hasHealth() ? `
       <div class="grid g2 mb">
         ${HEALTH_FIELDS.map(([k, lbl, unit, color, target]) => {
@@ -1668,7 +1672,7 @@ function fitBody() {
         The Fitbit Air has no screen and no API a personal page can use, so read
         sleep, resting HR and steps off Google Health and tap them in.<br>
         Ten seconds, and it makes the bulk data far more useful.
-        <br><br><button class="btn btn-accent" style="--_c:var(--fit)" onclick="logHealth()">Log today</button></div></div>`}
+        </div></div>`}
   </div>
 
   <div class="sect">${sectionHead('Weigh-in log')}
@@ -3576,7 +3580,7 @@ function copyText(t) { navigator.clipboard.writeText(t).then(() => toast('Copied
    HEVY — pull real workouts instead of typing them
    Key lives in localStorage on this device only. Never committed.
    ═══════════════════════════════════════════════════════════════════ */
-const BUILD = '2026.08.05-10';
+const BUILD = '2026.08.05-12';
 const HEVY_KEY = 'nick_os_hevy_key';
 const hevyKey = () => localStorage.getItem(HEVY_KEY) || '';
 const KG_TO_LB = 2.20462;
@@ -4591,6 +4595,183 @@ function heroHomeCard() {
 $('modalBg').addEventListener('click', e => { if (e.target === $('modalBg')) closeSheet(); });
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeSheet(); });
 
+/* ═══════════════════════════════════════════════════════════════════
+   APPLE HEALTH IMPORT
+   Fitbit Air, Bevel and the rest all write into Apple Health, so the
+   Health export is the one place their data can actually be reached
+   without an API. export.xml runs to hundreds of MB, so the zip entry
+   is streamed and reduced to per-day numbers as it goes — the whole
+   file is never held in memory.
+   ═══════════════════════════════════════════════════════════════════ */
+const AH_TYPES = {
+  HKQuantityTypeIdentifierStepCount: 'steps',
+  HKQuantityTypeIdentifierRestingHeartRate: 'rhr',
+  HKQuantityTypeIdentifierHeartRateVariabilitySDNN: 'hrv',
+  HKQuantityTypeIdentifierBodyMass: 'weight',
+  HKCategoryTypeIdentifierSleepAnalysis: 'sleep',
+};
+
+function ahImportNow() {
+  let inp = $('ahFile');
+  if (!inp) {
+    inp = document.createElement('input');
+    inp.type = 'file'; inp.id = 'ahFile'; inp.className = 'hidden';
+    document.body.appendChild(inp);
+  }
+  inp.onchange = e => { const f = e.target.files[0]; e.target.value = ''; if (f) ahImport(f); };
+  inp.click();
+}
+
+/* locate a zip entry without reading the whole archive into memory */
+async function zipEntry(file, matchFn) {
+  const tailLen = Math.min(66000, file.size);
+  const tail = new Uint8Array(await file.slice(file.size - tailLen).arrayBuffer());
+  const tv = new DataView(tail.buffer);
+  let eocd = -1;
+  for (let i = tail.length - 22; i >= 0; i--) if (tv.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+  if (eocd < 0) throw new Error('not a zip file');
+  const count = tv.getUint16(eocd + 10, true);
+  const cdOff = tv.getUint32(eocd + 16, true);
+  const cdLen = tv.getUint32(eocd + 12, true);
+  const cd = new Uint8Array(await file.slice(cdOff, cdOff + cdLen).arrayBuffer());
+  const cv = new DataView(cd.buffer);
+  let off = 0;
+  for (let i = 0; i < count; i++) {
+    if (cv.getUint32(off, true) !== 0x02014b50) break;
+    const method = cv.getUint16(off + 10, true);
+    const csize = cv.getUint32(off + 20, true);
+    const nlen = cv.getUint16(off + 28, true);
+    const mlen = cv.getUint16(off + 30, true);
+    const klen = cv.getUint16(off + 32, true);
+    const lho = cv.getUint32(off + 42, true);
+    const name = new TextDecoder().decode(cd.slice(off + 46, off + 46 + nlen));
+    if (matchFn(name)) {
+      const lh = new DataView(await file.slice(lho, lho + 30).arrayBuffer());
+      const start = lho + 30 + lh.getUint16(26, true) + lh.getUint16(28, true);
+      return { name, method, blob: file.slice(start, start + csize) };
+    }
+    off += 46 + nlen + mlen + klen;
+  }
+  return null;
+}
+
+async function ahImport(file) {
+  const say = (m, tone) => {
+    const el = $('ahOut');
+    if (el) { el.innerHTML = m; el.style.color = tone === 'ok' ? 'var(--fit)' : tone === 'err' ? 'var(--danger)' : 'var(--text-3)'; }
+    if (tone) toast(String(m).replace(/<[^>]+>/g, '').trim());
+  };
+  say('Opening…');
+  try {
+    let stream;
+    const head = new Uint8Array(await file.slice(0, 2).arrayBuffer());
+    if (head[0] === 0x50 && head[1] === 0x4B) {
+      const entry = await zipEntry(file, n => /export\.xml$/i.test(n) || /export_cda\.xml$/i.test(n));
+      if (!entry) throw new Error('no export.xml inside that zip');
+      if (entry.method === 0) stream = entry.blob.stream();
+      else if (typeof DecompressionStream === 'undefined') throw new Error('this browser cannot unzip');
+      else stream = entry.blob.stream().pipeThrough(new DecompressionStream('deflate-raw'));
+    } else {
+      stream = file.stream();                       // already-unzipped export.xml
+    }
+
+    const reader = stream.pipeThrough(new TextDecoderStream('utf-8', { fatal: false })).getReader();
+    const RE = /<Record\s+type="([^"]+)"[^>]*?(?:unit="([^"]*)")?[^>]*?startDate="([^"]+)"[^>]*?endDate="([^"]+)"[^>]*?value="([^"]*)"/g;
+    const acc = {};                                  // date -> {steps,rhrs[],hrvs[],sleepMs,weight}
+    let buf = '', scanned = 0, matched = 0;
+
+    const flush = (chunkEnd) => {
+      RE.lastIndex = 0;
+      let m, last = 0;
+      while ((m = RE.exec(buf))) {
+        last = RE.lastIndex;
+        const key = AH_TYPES[m[1]];
+        if (!key) continue;
+        matched++;
+        const start = m[3], end = m[4], val = m[5];
+        const day = (key === 'sleep' ? end : start).slice(0, 10);
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) continue;
+        const a = acc[day] || (acc[day] = { steps: 0, rhrs: [], hrvs: [], sleepMs: 0, weight: null, wUnit: '' });
+        if (key === 'steps') a.steps += Number(val) || 0;
+        else if (key === 'rhr') a.rhrs.push(Number(val) || 0);
+        else if (key === 'hrv') a.hrvs.push(Number(val) || 0);
+        else if (key === 'weight') { a.weight = Number(val) || null; a.wUnit = (m[2] || '').toLowerCase(); }
+        else if (key === 'sleep' && /Asleep/i.test(val)) {
+          const ms = new Date(end) - new Date(start);
+          if (ms > 0 && ms < 20 * 3600e3) a.sleepMs += ms;
+        }
+      }
+      /* keep only the unparsed remainder so memory stays flat */
+      buf = chunkEnd ? '' : buf.slice(Math.max(0, last - 400));
+    };
+
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += value; scanned += value.length;
+      if (buf.length > 400000) { flush(false); say('Reading… ' + round(scanned / 1e6) + ' MB'); }
+    }
+    flush(true);
+
+    /* fold into the dashboard's own shapes */
+    let days = 0, weights = 0;
+    for (const d in acc) {
+      const a = acc[d], rec = { ...(DB.health[d] || {}) };
+      let touched = false;
+      if (a.steps > 0) { rec.steps = Math.round(a.steps); touched = true; }
+      if (a.rhrs.length) { rec.rhr = Math.round(avg(a.rhrs)); touched = true; }
+      if (a.hrvs.length) { rec.hrv = Math.round(avg(a.hrvs)); touched = true; }
+      if (a.sleepMs > 0) { rec.sleep = round(a.sleepMs / 3600e3, 1); touched = true; }
+      if (touched) { DB.health[d] = rec; days++; }
+      if (a.weight) {
+        const kg = /lb/.test(a.wUnit) ? a.weight / KG_TO_LB : a.weight;
+        const w = round(DB.profile.unit === 'lb' ? kg * KG_TO_LB : kg, 1);
+        if (!DB.weights.some(x => x.date === d)) { DB.weights.push({ date: d, w }); weights++; }
+      }
+    }
+    DB.weights.sort((a, b) => a.date.localeCompare(b.date));
+    logScore(); save();
+
+    if (!days && !weights) {
+      say('<b>Read it, but found nothing to import.</b> Make sure you exported from the Health app itself ' +
+          '(profile picture → Export All Health Data), not from Bevel or Fitbit.', 'err');
+      return;
+    }
+    say(`<b>Imported ${days} day${days === 1 ? '' : 's'}</b>` +
+        (weights ? ` and ${weights} weigh-in${weights === 1 ? '' : 's'}` : '') +
+        ` from ${matched.toLocaleString()} health records.`, 'ok');
+  } catch (e) {
+    say('<b>Could not read that.</b> ' + esc(e.message) +
+        '<br>Export from the Health app: profile picture → Export All Health Data.', 'err');
+  }
+}
+
+function healthImportSheet() {
+  sheet('Import health data', `
+    <div class="card mb pad-sm" style="--_c:var(--fit)">
+      <div class="sub" style="line-height:1.65">Your Fitbit Air, Bevel and anything else all write into
+        <b>Apple Health</b>. There is no API a personal page can use, but the Health export contains everything —
+        steps, sleep, resting heart rate, HRV and weight.</div>
+    </div>
+    <div class="card mb pad-sm">
+      <div class="eyebrow mb">On your iPhone</div>
+      <div class="li-s" style="white-space:normal;line-height:1.7">
+        1. Open <b>Health</b><br>
+        2. Tap your <b>profile picture</b>, top right<br>
+        3. Scroll down → <b>Export All Health Data</b><br>
+        4. Save the zip, then load it below
+      </div>
+    </div>
+    <button class="btn btn-accent btn-block" style="--_c:var(--fit)" onclick="ahImportNow()">Choose Health export</button>
+    <div id="ahOut" class="li-s mt mb" style="white-space:normal;min-height:18px;line-height:1.6"></div>
+    <div class="card pad-sm">
+      <div class="li-s" style="white-space:normal;line-height:1.6">The export can be large. It is read in a
+        stream on your device and reduced to daily numbers — nothing is uploaded anywhere.</div>
+    </div>
+    <button class="btn btn-block mt" onclick="closeSheet()">Close</button>`);
+}
+
+
 /* ── self-update ──────────────────────────────────────────────
    The 75 Hard service worker registered at /my-dashboard/ caches every
    page under that scope, this one included, which can pin the browser
@@ -4598,6 +4779,7 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape') closeSheet()
    deployed BUILD against the running one and reload once if they
    differ. Guarded by sessionStorage so it can never loop. */
 (async function selfUpdate() {
+  if (location.protocol === 'file:') return;   // nothing to update against locally
   try {
     if ('caches' in window) {
       const keys = await caches.keys();
